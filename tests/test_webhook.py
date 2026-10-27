@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from app.core.config import Settings
 from app.main import create_app
-from app.services.idempotency import InMemoryEventStore
+from tests.fakes import FakeWebhookEventRepository
 
 APP_SECRET = "test-app-secret"
 VERIFY_TOKEN = "test-verify-token"
@@ -42,8 +42,12 @@ def message_payload(message_id: str = "wamid.TEST1", sender: str = "573001112233
 
 @pytest.fixture
 def client():
-    settings = Settings(meta_app_secret=APP_SECRET, meta_verify_token=VERIFY_TOKEN)
-    return TestClient(create_app(settings=settings, event_store=InMemoryEventStore()))
+    settings = Settings(
+        meta_app_secret=APP_SECRET,
+        meta_verify_token=VERIFY_TOKEN,
+        database_url="postgresql://unused",
+    )
+    return TestClient(create_app(settings=settings, webhook_repository=FakeWebhookEventRepository()))
 
 
 @pytest.fixture
@@ -94,7 +98,7 @@ def test_post_with_valid_signature_is_accepted(client):
         "/webhook", content=body, headers={"X-Hub-Signature-256": sign(body), "Content-Type": "application/json"}
     )
     assert response.status_code == 200
-    assert response.json() == {"accepted": 1, "duplicates": 0}
+    assert response.json() == {"accepted": 1, "duplicates": 0, "conflicts": 0}
 
 
 def test_post_without_signature_is_rejected(client):
@@ -135,8 +139,8 @@ def test_duplicate_message_is_not_processed_twice(client):
     headers = {"X-Hub-Signature-256": sign(body)}
     first = client.post("/webhook", content=body, headers=headers)
     second = client.post("/webhook", content=body, headers=headers)
-    assert first.json() == {"accepted": 1, "duplicates": 0}
-    assert second.json() == {"accepted": 0, "duplicates": 1}
+    assert first.json() == {"accepted": 1, "duplicates": 0, "conflicts": 0}
+    assert second.json() == {"accepted": 0, "duplicates": 1, "conflicts": 0}
 
 
 # --- Robustez del payload ---
@@ -147,7 +151,7 @@ def test_status_only_payload_is_acknowledged_without_messages(client):
     ).encode()
     response = client.post("/webhook", content=body, headers={"X-Hub-Signature-256": sign(body)})
     assert response.status_code == 200
-    assert response.json() == {"accepted": 0, "duplicates": 0}
+    assert response.json() == {"accepted": 0, "duplicates": 0, "conflicts": 0}
 
 
 def test_invalid_json_with_valid_signature_returns_400(client):

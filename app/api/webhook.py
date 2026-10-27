@@ -1,4 +1,8 @@
-"""Endpoints del webhook de WhatsApp Cloud API. Responden rápido: ninguna tarea costosa se ejecuta aquí."""
+"""Endpoints del webhook de WhatsApp Cloud API.
+
+El POST valida, persiste de forma idempotente y responde. No llama a Claude ni ejecuta trabajo costoso:
+el procesamiento lo hará un worker sobre webhook_events en una fase posterior.
+"""
 
 from __future__ import annotations
 
@@ -9,7 +13,9 @@ from fastapi import APIRouter, HTTPException, Request, Response, status
 from fastapi.responses import PlainTextResponse
 
 from app.core.logging_utils import logger, mask_phone
-from app.models.webhook import extract_inbound_messages
+from app.models.webhook import PayloadValidationError, extract_inbound_messages
+from app.repositories.errors import StorageError
+from app.repositories.webhook_events import RegisterOutcome, WebhookEventRecord
 from app.security.signature import verify_meta_signature
 
 router = APIRouter(prefix="/webhook", tags=["whatsapp"])
@@ -33,8 +39,10 @@ def verify_webhook(request: Request) -> PlainTextResponse:
 @router.post("")
 async def receive_webhook(request: Request) -> Response:
     settings = request.app.state.settings
-    if not settings.meta_app_secret:
-        # Falla cerrado: sin secreto no se puede validar el origen.
+    repository = request.app.state.webhook_repository
+    if not settings.meta_app_secret or repository is None:
+        # Falla cerrado: sin secreto no se valida el origen; sin base no se puede garantizar el registro.
+        logger.error("webhook_not_configured")
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="not_configured")
 
     raw_body = await request.body()
@@ -51,20 +59,43 @@ async def receive_webhook(request: Request) -> Response:
     except json.JSONDecodeError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid_json")
 
-    store = request.app.state.event_store
+    try:
+        messages = extract_inbound_messages(payload, max_messages=settings.max_messages_per_request)
+    except PayloadValidationError as exc:
+        # El código de error describe la regla incumplida; nunca incluye el contenido recibido.
+        logger.warning("webhook_payload_rejected reason=%s", exc)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid_payload")
+
     accepted = 0
     duplicates = 0
-    for message in extract_inbound_messages(payload):
-        if store.register(message.message_id):
+    conflicts = 0
+    for message in messages:
+        record = WebhookEventRecord(
+            external_event_id=message.message_id,
+            contact_wa_id=message.sender,
+            payload=message.raw,
+            payload_sha256=message.payload_sha256,
+        )
+        try:
+            outcome = repository.register(record)
+        except StorageError as exc:
+            # Respuesta no exitosa: Meta reintenta. Los reintentos son seguros porque el registro es idempotente.
+            logger.error("webhook_storage_failed reason=%s", exc)
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="storage_unavailable")
+
+        if outcome is RegisterOutcome.NEW:
             accepted += 1
-            # Fase 5: aquí se encolará el trabajo (cola de procesamiento). Sin tareas costosas en el webhook.
             logger.info("inbound_message_accepted sender=%s", mask_phone(message.sender))
-        else:
+        elif outcome is RegisterOutcome.DUPLICATE:
             duplicates += 1
             logger.info("inbound_message_duplicate")
+        else:
+            # Mismo wamid con contenido distinto: no se sobrescribe; queda registrado para revisión.
+            conflicts += 1
+            logger.warning("inbound_message_conflict")
 
     return Response(
-        content=json.dumps({"accepted": accepted, "duplicates": duplicates}),
+        content=json.dumps({"accepted": accepted, "duplicates": duplicates, "conflicts": conflicts}),
         media_type="application/json",
         status_code=status.HTTP_200_OK,
     )
