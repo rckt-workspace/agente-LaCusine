@@ -1,0 +1,40 @@
+{
+  "version": "2026-10-28",
+  "source": "Base de conocimiento La Cuisine Appliances – Agente WhatsApp (26/10/2026). Resumen operativo; el documento original es la fuente.",
+  "approved": [
+    {"id": "A01", "topic": "identidad", "statement": "La Cuisine Appliances Colombia importa y distribuye electrodomésticos de gama alta, gasodomésticos y artículos de cocina."},
+    {"id": "A02", "topic": "precios", "statement": "Los precios son de referencia, pueden cambiar por promociones y se expresan en pesos colombianos. Comparte el link del producto para ver el precio actualizado en la web."},
+    {"id": "A03", "topic": "pagos", "statement": "El pago se realiza en la web con los medios habilitados. El agente no recibe pagos ni confirma pagos."},
+    {"id": "A04", "topic": "tiendas", "statement": "Showrooms: dos en Bogotá, uno en Medellín (Envigado) y uno en Barranquilla. Los horarios exactos se consultan en la web."},
+    {"id": "A05", "topic": "plazo_entrega", "statement": "La entrega toma de 5 a 8 días hábiles desde la confirmación del pago; el plazo exacto se informa antes de pagar según la dirección. No prometas fechas exactas."},
+    {"id": "A06", "topic": "retiro_en_tienda", "statement": "Retiro gratis en Bogotá, Medellín o Barranquilla, programado con 24 horas de anticipación."},
+    {"id": "A07", "topic": "compra", "statement": "Solo pueden comprar mayores de 18 años."},
+    {"id": "A08", "topic": "ciudades", "statement": "Hay envíos a las principales ciudades y zonas que cubre la transportadora. El flete siempre se cotiza según producto, peso, volumen y ciudad."},
+    {"id": "A09", "topic": "servicio_tecnico", "statement": "El mantenimiento se solicita con el formulario 'Solicitud de Mantenimiento' de la web."},
+    {"id": "A10", "topic": "garantia_legal", "statement": "Los productos tienen la garantía legal de calidad de la Ley 1480 de 2011. Las condiciones de la garantía comercial son las del fabricante o importador."}
+  ],
+  "pending_validation": [
+    {"id": "P01", "topic": "garantia_accesorios", "statement": "La fuente indica que los accesorios no tienen garantía. Puede chocar con la garantía legal de calidad. NO afirmar la exclusión; escalar a un asesor."},
+    {"id": "P02", "topic": "devoluciones_promocion", "statement": "La fuente indica que los productos en promoción o con descuento no admiten devolución. Puede chocar con derechos del consumidor. NO afirmarlo como absoluto; escalar."},
+    {"id": "P03", "topic": "gasto_administrativo", "statement": "La fuente indica un 25 % de gasto administrativo en cambios por producto de igual o menor valor. Pendiente de validación legal. NO mencionar el porcentaje; escalar."},
+    {"id": "P04", "topic": "condiciones_devolucion", "statement": "Condiciones de devolución (producto sin uso, caja original, factura). Pendiente de validación legal; describir solo como 'condiciones a confirmar con un asesor'."},
+    {"id": "P05", "topic": "dias_sin_iva", "statement": "Referencia al Decreto 1314 de 2021 para compras en días sin IVA. Pendiente de validación; escalar."},
+    {"id": "P06", "topic": "cancelacion_precio_error", "statement": "La tienda puede cancelar pedidos con precio publicado por error. Pendiente de validación; no comprometer la venta; escalar."},
+    {"id": "P07", "topic": "recepcion_y_novedades", "statement": "Plazo de 24 horas para reportar novedades al recibir. Pendiente de validación; escalar cualquier reclamo de entrega."},
+    {"id": "P08", "topic": "recoleccion_por_tercero", "statement": "La fuente pide nombre, apellido y cédula de quien retira en tienda. El agente NO solicita cédula por WhatsApp; derivar a un asesor."},
+    {"id": "P09", "topic": "pago_contra_entrega", "statement": "Pago contra entrega solo cuando se habilite expresamente. No ofrecerlo."},
+    {"id": "P10", "topic": "nota_de_entrega", "statement": "Cada producto puede tener una nota de entrega con fecha relativa (p. ej. 'finales de octubre'). Repítela como nota, nunca la conviertas en fecha exacta."}
+  ],
+  "escalation": [
+    {"id": "E01", "topic": "garantias", "statement": "Garantías: pedir producto, fecha de compra y número de factura, y escalar a un asesor."},
+    {"id": "E02", "topic": "devoluciones_cambios", "statement": "Devoluciones, retractos y cambios: escalar a un asesor."},
+    {"id": "E03", "topic": "reclamos", "statement": "Reclamos, quejas, productos dañados o defectuosos: escalar con prioridad alta."},
+    {"id": "E04", "topic": "estado_pedido_factura", "statement": "Estado de un pedido, facturas o pagos: escalar; no confirmar estados sin fuente autorizada."},
+    {"id": "E05", "topic": "cotizaciones_instalacion_flete", "statement": "Cotizaciones personalizadas, instalación y fletes: escalar a un asesor."},
+    {"id": "E06", "topic": "stock_exacto", "statement": "Stock o disponibilidad exacta: no garantizarla; indicar la disponibilidad de la fuente con su fecha y escalar si se requiere confirmación."},
+    {"id": "E07", "topic": "descuentos", "statement": "Solicitudes de descuento: no ofrecer descuentos; escalar."},
+    {"id": "E08", "topic": "datos_personales", "statement": "Solicitudes sobre datos personales: derivar a protecciondedatos de la empresa y escalar."},
+    {"id": "E09", "topic": "fuera_de_catalogo", "statement": "Productos o marcas fuera del catálogo o con atención por asesor (p. ej. marcas de cotización): tomar datos básicos y escalar."},
+    {"id": "E10", "topic": "asesoria_juridica", "statement": "Preguntas jurídicas definitivas: no dar asesoría jurídica; escalar."}
+  ]
+}

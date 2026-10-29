@@ -219,9 +219,12 @@ def test_app_construction_does_not_connect_to_database():
 
 
 def test_webhook_path_does_not_load_ai_client():
-    import app.main  # noqa: F401
+    # Subproceso limpio: pytest carga todos los módulos de prueba en el mismo proceso.
+    import subprocess
 
-    assert "anthropic" not in sys.modules
+    code = "import sys, app.main; assert 'anthropic' not in sys.modules, 'webhook importa el SDK de IA'"
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stderr
 
 
 # --- Logging seguro ---

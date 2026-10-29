@@ -20,6 +20,7 @@ HANDOFF_REASONS = frozenset(
         "quote_request",
         "installation",
         "warranty",
+        "return_request",
         "complaint",
         "unsupported_request",
         "customer_request",
@@ -148,3 +149,46 @@ class PostgresHandoffRepository:
         if row is None:
             raise StorageError("handoff_not_found_after_upsert")
         return row[0]
+
+
+class PostgresConversationStateReader:
+    """Lectura del estado de automatización para decidir si el agente puede responder."""
+
+    def __init__(self, pool: ConnectionPool) -> None:
+        self._pool = pool
+
+    def automation_state(self, conversation_id: UUID) -> str | None:
+        try:
+            with self._pool.connection() as conn:
+                row = conn.execute(
+                    "select automation_state from public.conversations where id = %s", (conversation_id,)
+                ).fetchone()
+        except (psycopg.Error, PoolClosed):
+            raise StorageError("conversation_read_failed") from None
+        return row[0] if row else None
+
+
+class PostgresRecentTurnsReader:
+    """Últimos mensajes de UNA conversación con contenido vigente, en orden cronológico."""
+
+    def __init__(self, pool: ConnectionPool) -> None:
+        self._pool = pool
+
+    def recent_turns(self, conversation_id: UUID, limit: int) -> list[tuple[str, str, datetime]]:
+        try:
+            with self._pool.connection() as conn:
+                rows = conn.execute(
+                    """
+                    select direction, content_text, received_at
+                    from public.messages
+                    where conversation_id = %s
+                      and content_text is not null
+                      and (content_expires_at is null or content_expires_at > now())
+                    order by received_at desc
+                    limit %s
+                    """,
+                    (conversation_id, limit),
+                ).fetchall()
+        except (psycopg.Error, PoolClosed):
+            raise StorageError("message_read_failed") from None
+        return [(row[0], row[1], row[2]) for row in reversed(rows)]

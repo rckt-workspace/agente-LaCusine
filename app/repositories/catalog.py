@@ -24,6 +24,13 @@ class ProductRecord:
     availability_as_of: date | None
     product_url: str | None
     source_hash: str
+    name: str | None = None
+    previous_price_cop: Decimal | None = None
+    savings_cop: Decimal | None = None
+    is_available: bool | None = None
+    delivery_note: str | None = None
+    extracted_on: date | None = None
+    search_text: str = ""
 
 
 @dataclass(frozen=True)
@@ -39,24 +46,28 @@ class CatalogRepository(Protocol):
 
 # Una sola sentencia por lote. Solo actualiza filas cuyo hash de origen cambió,
 # por lo que una reimportación del mismo archivo no reescribe nada.
-_UPSERT_SQL = """
-    insert into public.products
-        (reference, brand, category, description, price_cop,
-         availability_label, availability_as_of, product_url, source_hash)
+_COLUMNS = (
+    "reference", "brand", "category", "description", "price_cop",
+    "availability_label", "availability_as_of", "product_url", "source_hash",
+    "name", "previous_price_cop", "savings_cop", "is_available", "delivery_note",
+    "extracted_on", "search_text",
+)
+_CASTS = (
+    "text[]", "text[]", "text[]", "text[]", "numeric[]",
+    "text[]", "date[]", "text[]", "text[]",
+    "text[]", "numeric[]", "numeric[]", "boolean[]", "text[]",
+    "date[]", "text[]",
+)
+_UNNEST_ARGS = ", ".join(f"%s::{cast}" for cast in _CASTS)
+_UPDATE_SET = ", ".join(f"{c} = excluded.{c}" for c in _COLUMNS if c != "reference")
+
+# Una sola sentencia por lote. Solo actualiza filas cuyo hash de origen cambió,
+# por lo que una reimportación del mismo archivo no reescribe nada.
+_UPSERT_SQL = f"""
+    insert into public.products ({", ".join(_COLUMNS)})
     select *
-    from unnest(
-        %s::text[], %s::text[], %s::text[], %s::text[], %s::numeric[],
-        %s::text[], %s::date[], %s::text[], %s::text[]
-    )
-    on conflict (reference) do update set
-        brand = excluded.brand,
-        category = excluded.category,
-        description = excluded.description,
-        price_cop = excluded.price_cop,
-        availability_label = excluded.availability_label,
-        availability_as_of = excluded.availability_as_of,
-        product_url = excluded.product_url,
-        source_hash = excluded.source_hash
+    from unnest({_UNNEST_ARGS})
+    on conflict (reference) do update set {_UPDATE_SET}
     where public.products.source_hash is distinct from excluded.source_hash
     returning (xmax = 0) as inserted
 """
@@ -84,14 +95,4 @@ class PostgresCatalogRepository:
 
 
 def _as_arrays(batch: list[ProductRecord]) -> tuple[list, ...]:
-    return (
-        [r.reference for r in batch],
-        [r.brand for r in batch],
-        [r.category for r in batch],
-        [r.description for r in batch],
-        [r.price_cop for r in batch],
-        [r.availability_label for r in batch],
-        [r.availability_as_of for r in batch],
-        [r.product_url for r in batch],
-        [r.source_hash for r in batch],
-    )
+    return tuple([getattr(r, column) for r in batch] for column in _COLUMNS)

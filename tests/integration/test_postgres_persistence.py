@@ -1,9 +1,8 @@
 """Pruebas de integración contra PostgreSQL real.
 
-Requisitos:
-  * TEST_DATABASE_URL apunta a una base LOCAL DE PRUEBAS cuyo nombre contiene "test".
-  * Nunca apuntar a producción. Las pruebas reinician el esquema público de esa base.
-Sin TEST_DATABASE_URL, todas se omiten con el motivo indicado.
+Requisitos de seguridad: ver tests/integration/db_guard.py (APP_ENV=test, confirmación explícita,
+loopback, base lacusine_test exacta). Si TEST_DATABASE_URL está definida pero es insegura, el módulo
+FALLA; no se omite. Sin TEST_DATABASE_URL, las pruebas se omiten con el motivo indicado.
 """
 
 from __future__ import annotations
@@ -15,8 +14,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import psycopg
-import pytest
 from psycopg import conninfo
+import pytest
+from tests.integration.db_guard import UnsafeTestDatabaseError, validate_test_database_url
 from psycopg.errors import CheckViolation, ForeignKeyViolation
 
 from app.db.pool import create_pool
@@ -37,7 +37,7 @@ from app.services.catalog_import import import_catalog
 
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
 MIGRATIONS_DIR = Path(__file__).resolve().parents[2] / "supabase" / "migrations"
-RLS_TABLES = ("leads", "conversations", "messages", "webhook_events", "products", "human_handoffs")
+RLS_TABLES = ("leads", "conversations", "messages", "webhook_events", "products", "human_handoffs", "llm_usage_events")
 HASH = "a" * 64
 
 pytestmark = pytest.mark.integration
@@ -46,13 +46,10 @@ if not TEST_DATABASE_URL:
     pytest.skip("TEST_DATABASE_URL no configurada: pruebas de integración omitidas", allow_module_level=True)
 
 
-def _assert_is_test_database(url: str) -> None:
-    dbname = conninfo.conninfo_to_dict(url).get("dbname", "")
-    if "test" not in dbname.lower():
-        raise RuntimeError("TEST_DATABASE_URL debe apuntar a una base cuyo nombre contenga 'test'")
-
-
-_assert_is_test_database(TEST_DATABASE_URL)
+try:
+    validate_test_database_url(TEST_DATABASE_URL, dict(os.environ))
+except UnsafeTestDatabaseError as exc:
+    pytest.fail(f"Pruebas destructivas bloqueadas por seguridad: {exc}", pytrace=False)
 
 
 def _reset_and_migrate() -> None:
@@ -61,6 +58,7 @@ def _reset_and_migrate() -> None:
     Simula los roles de Supabase (anon, authenticated) con privilegios por defecto amplios,
     para verificar que las migraciones los retiran.
     """
+    validate_test_database_url(TEST_DATABASE_URL, dict(os.environ))  # defensa en profundidad
     with psycopg.connect(TEST_DATABASE_URL, autocommit=True) as conn:
         conn.execute("drop schema if exists public cascade")
         conn.execute("create schema public")

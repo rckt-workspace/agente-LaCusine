@@ -7,6 +7,9 @@ Migraciones versionadas en `supabase/migrations/`, aplicadas en orden:
 | `20261027100000_core_schema.sql` | Tablas, restricciones, índices, triggers de `updated_at` |
 | `20261027100100_rls_and_grants.sql` | RLS en todas las tablas y retirada de privilegios a `anon` y `authenticated` |
 | `20261027100200_retention.sql` | Función `purge_expired_personal_data` |
+| `20261028100000_products_pricing_search.sql` | Precio anterior, ahorro, disponibilidad, nota de entrega, fecha de extracción y texto de búsqueda en `products` |
+| `20261028100100_llm_usage_events.sql` | Auditoría de costos de Claude (`llm_usage_events`) con RLS |
+| `20261028100200_handoff_reason_return.sql` | Motivo `return_request` en `human_handoffs` |
 
 ## Entidad-relación
 
@@ -15,6 +18,7 @@ erDiagram
     leads ||--o{ conversations : "tiene (cascade)"
     conversations ||--o{ messages : "contiene (cascade)"
     conversations ||--o{ human_handoffs : "solicita (cascade)"
+    conversations ||--o{ llm_usage_events : "registra costo (set null)"
     webhook_events }o..o| leads : "contact_wa_id (sin FK, ver retención)"
     products {
         uuid id PK
@@ -46,11 +50,13 @@ Restricción: `status = 'closed'` si y solo si `closed_at` tiene valor. Índice 
 - Diagnóstico: `received_at`, `processed_at`, `updated_at`, `expires_at`.
 - Índice parcial `webhook_events_pending_idx` para que el worker consulte solo lo pendiente.
 
-**products** — catálogo importado. `reference` es la referencia comercial y clave única de actualización.
+**products** — catálogo importado. `reference` es la referencia comercial y clave única de actualización. Desde la migración `20261028100000` incluye `name`, `previous_price_cop` (debe ser mayor que `price_cop`), `savings_cop`, `is_available`, `delivery_note` (texto de la fuente, nunca una fecha), `extracted_on` y `search_text` (texto normalizado sin tildes para búsqueda).
 `price_cop` y `price_is_reference` (siempre verdadero): el precio es dato de referencia de la fuente.
 `availability_label` y `availability_as_of`: disponibilidad tal como llegó en la fuente, con fecha. No es inventario en tiempo real.
 
-**human_handoffs** — solicitudes de asesor. `reason` (enumerado), `priority` (`low`, `normal`, `high`, `urgent`), `status` (`open`, `assigned`, `resolved`, `cancelled`), `assigned_advisor`, `opened_at`, `closed_at`.
+**llm_usage_events** — auditoría de llamadas a Claude. Sin prompts ni respuestas: modelo, tokens de entrada, salida y caché, costo estimado en USD, estado y código de error. `call_id` es única solo para registros exitosos (índice parcial), así que un fallo puede registrarse varias veces sin bloquear el éxito posterior.
+
+**human_handoffs** — solicitudes de asesor. `reason` (enumerado: `purchase_intent`, `quote_request`, `installation`, `warranty`, `return_request`, `complaint`, `unsupported_request`, `customer_request`, `other`), `priority` (`low`, `normal`, `high`, `urgent`), `status` (`open`, `assigned`, `resolved`, `cancelled`), `assigned_advisor`, `opened_at`, `closed_at`.
 Índice único parcial: **una solicitud activa por conversación**. Estado `assigned` exige asesor asignado.
 
 ## Decisiones de diseño

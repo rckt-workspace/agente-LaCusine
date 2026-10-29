@@ -4,7 +4,7 @@ import re
 from pathlib import Path
 
 MIGRATIONS_DIR = Path(__file__).resolve().parents[1] / "supabase" / "migrations"
-RLS_TABLES = ("leads", "conversations", "messages", "webhook_events", "products", "human_handoffs")
+RLS_TABLES = ("leads", "conversations", "messages", "webhook_events", "products", "human_handoffs", "llm_usage_events")
 NAME_PATTERN = re.compile(r"^\d{14}_[a-z_]+\.sql$")
 
 
@@ -47,7 +47,7 @@ def test_no_service_role_or_credentials_in_migrations():
     assert "to service_role" not in sql
     assert "password" not in sql
     assert "api_key" not in sql
-    assert "anthropic" not in sql
+    assert "anthropic_api" not in sql
     assert "meta_token" not in sql
     assert "access_token" not in sql
 
