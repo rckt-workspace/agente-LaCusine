@@ -48,7 +48,7 @@ Por defecto, si hay filas inválidas o duplicadas, **no se escribe ni una fila**
 Aplicar en Supabase Cloud exige la autorización del responsable del proyecto y estas condiciones:
 
 - Respaldo o punto de restauración confirmado (ver [supabase-deployment.md](supabase-deployment.md)).
-- Las migraciones 1 a 10 aplicadas y verificadas en el proyecto.
+- Las migraciones 1 a 11 aplicadas y verificadas en el proyecto.
 - Ensayo en seco y en base de prueba sin incidencias.
 - Un responsable de contenido que haya revisado una muestra de precios y disponibilidad.
 - La cadena de conexión elegida según [supabase-deployment.md](supabase-deployment.md), con SSL, y un rol de importación. Nunca `service_role` ni el rol `postgres`.

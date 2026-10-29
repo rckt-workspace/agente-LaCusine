@@ -50,6 +50,8 @@ Un solo Background Worker ejecuta el procesamiento de eventos **y** el despacho 
 - El plan gratuito **suspende** el servicio por inactividad. Eso es incompatible con recibir webhooks y procesar una cola 24/7. No debe usarse para operación comercial.
 - Cada servicio se factura por separado. Un worker encendido consume recursos aunque no haya mensajes.
 
+**Costo del worker en espera:** un Background Worker de pago se factura mientras está encendido, **aunque esté en espera** (`WORKER_ENABLED=false`) y no procese nada. Mantener el servicio creado sin autorización genera gasto. Si no se va a usar, dejarlo detenido en el panel. El plan y el precio deben validarse en el panel de Render antes de crear el servicio; este repositorio no los declara.
+
 ## Despliegues automáticos
 
 - `autoDeployTrigger: off` en ambos servicios. Ningún push a `main` ni a una rama de desarrollo despliega solo.
@@ -60,6 +62,21 @@ Un solo Background Worker ejecuta el procesamiento de eventos **y** el despacho 
 - En `render.yaml`, cada secreto aparece con `sync: false`. Render pide el valor al crear el Blueprint y no lo sobrescribe en sincronizaciones posteriores.
 - Ningún secreto tiene valor literal en el archivo. Una prueba del repositorio lo verifica.
 - Los valores se introducen en el panel de Render, no en GitHub ni en Supabase. Ver [environment-variables.md](environment-variables.md).
+
+## Verificación local del arranque (sin Render)
+
+Comprobado en esta máquina, con `.venv` y sin ninguna variable de entorno de Meta, Anthropic ni base de datos:
+
+| Comprobación | Resultado |
+|---|---|
+| `uvicorn app.main:app` arranca | Sí |
+| `GET /health` | `200` |
+| `GET /ready` sin base | `503` con `{"status": "unavailable"}`, sin motivo |
+| `GET /webhook` con token incorrecto | `403` |
+| `POST /webhook` sin firma | `503` (falla cerrado sin `META_APP_SECRET`) |
+| Worker en espera | Vivo, sin conexión, probado con proceso real (`tests/test_worker_process.py`) |
+
+Limitación: en Windows, el cierre con `SIGTERM` enviado desde Git Bash terminó con código 143 y no con 0. El apagado limpio debe comprobarse en Linux (el entorno de Render) antes de la puesta en marcha. Los nombres de variables requeridas por cada servicio están en `render.yaml` y en [environment-variables.md](environment-variables.md).
 
 ## Procedimiento (cuando haya autorización)
 

@@ -18,6 +18,7 @@ Las migraciones son incrementales y se aplican **en este orden exacto**. Cada ar
 | 8 | `20261029100100_retention_worker_safe.sql` | 4 | Retención que solo elimina estados finales |
 | 9 | `20261030100000_whatsapp_delivery.sql` | 5 | Estados de entrega, lease de envío, eventos de estado |
 | 10 | `20261031100000_phase_5_1_hardening.sql` | 5.1 | Marca de ventana confiable, tipo de salida (`reply`/`handoff_notice`), línea de negocio en salidas, precio confirmado y `admin_audit_log` |
+| 11 | `20261101100000_app_roles_rls_policies.sql` | 5.1 (revisión final) | Roles de grupo sin login (`lacusine_backend`, `lacusine_admin_ops`), privilegios por tabla y políticas RLS solo para esos grupos |
 
 La migración 3 queda reemplazada en efecto por la 8. Ninguna se edita: el historial se conserva.
 
@@ -37,14 +38,31 @@ La migración 10 añade `admin_audit_log` con RLS activa con `update`, `delete` 
 
 ### Rol de base de datos
 
-El backend debe usar un **rol dedicado de mínimo privilegio**, no el rol `postgres` ni `service_role` en el frontend. Pasos (a ejecutar con autorización, en el proyecto real):
+**Hallazgo de la revisión final:** las tablas tienen RLS activa. Sin políticas, un rol que no sea propietario y no tenga `BYPASSRLS` no ve filas y no puede insertar. Antes de la migración 11, la aplicación solo funcionaba como propietario del esquema. Ver [auditoria-fase-5-1.md](auditoria-fase-5-1.md), hallazgo C5.
 
-1. Crear un rol de login con contraseña fuerte generada fuera del repositorio.
-2. Conceder `usage` sobre el esquema `public` y `select, insert, update, delete` solo sobre las tablas de la aplicación.
-3. Conceder `execute` solo sobre `purge_expired_personal_data`.
-4. No conceder privilegios sobre `auth`, `storage` ni otros esquemas de Supabase.
+La migración 11 crea dos roles de **grupo sin login** y no contiene contraseñas:
 
-Las tablas tienen RLS activa y ningún privilegio para `anon` ni `authenticated`. Por tanto, las claves públicas de Supabase no pueden leer prospectos, mensajes, colas ni reservas.
+| Grupo | Uso | Privilegios (resumen) |
+|---|---|---|
+| `lacusine_backend` | API y worker | `select, insert, update` en prospectos, conversaciones, mensajes, productos, transferencias y reservas; `select, insert` en uso de modelos; `select, insert, update, delete` en eventos, salidas y leases; ejecución de la purga. |
+| `lacusine_admin_ops` | CLI de conciliación | `select` en eventos, salidas, reservas, transferencias, conversaciones y auditoría; `update` en las cinco primeras; `insert` y `select` en `admin_audit_log`. Sin `update` ni `delete` sobre la auditoría. |
+
+Ni `public`, ni `anon`, ni `authenticated` reciben privilegios ni políticas. Los roles de login los crea el responsable **fuera del repositorio**, con contraseña generada fuera del repositorio, y luego se asocian a un grupo:
+
+```sql
+-- Ejecutar con autorización, en el proyecto real, con el rol propietario. Nunca en el repositorio.
+create role lacusine_app login password '<generada-fuera-del-repositorio>';
+grant lacusine_backend to lacusine_app;
+create role lacusine_admin login password '<generada-fuera-del-repositorio>';
+grant lacusine_admin_ops to lacusine_admin;
+```
+
+Reglas:
+- La aplicación **no** debe conectarse como `postgres` ni con `service_role`. Un rol propietario puede saltarse RLS, y eso anularía la protección que esta migración añade.
+- Ningún rol de login debe tener `SUPERUSER` ni `BYPASSRLS`. Las pruebas lo comprueban (`tests/integration/test_roles_rls_postgres.py`).
+- `DATABASE_URL` apunta al rol de la aplicación. `LACUSINE_ADMIN_DATABASE_URL` apunta al rol administrativo, distinto.
+
+**Qué se ha probado y qué no:** se ha probado con roles de login reales en PostgreSQL local desechable: el flujo completo con el rol de la aplicación, las denegaciones, la auditoría de solo adición, el presupuesto y el E2E. **No se ha probado en Supabase Cloud.** Supabase puede aplicar particularidades a sus roles (por ejemplo, el rol `postgres` y los privilegios por defecto) que solo se confirman en un proyecto de prueba aislado.
 
 ### Elegir la cadena de conexión
 
@@ -87,14 +105,14 @@ Los modos siguientes provienen de la documentación oficial de Supabase; **verif
 
 ## Procedimiento de aplicación (cuando haya autorización)
 
-1. Crear un proyecto Supabase de **prueba** aislado y aplicar las 9 migraciones en orden.
+1. Crear un proyecto Supabase de **prueba** aislado y aplicar las 11 migraciones en orden.
 2. Las pruebas destructivas **nunca** se ejecutan contra Supabase: el guard rechaza hosts de Supabase y exige una base de loopback. La verificación en la nube se limita a `/ready` y consultas de solo lectura.
 3. Crear el rol del backend y verificar que no puede leer `auth` ni escribir fuera de las tablas.
 4. Crear, si se usará la CLI de conciliación, un rol administrativo **distinto**: `select` e `insert` sobre `admin_audit_log`, y `update` solo sobre las tablas que la CLI modifica. Nunca `delete` ni `truncate` sobre la auditoría. Su conexión va en `LACUSINE_ADMIN_DATABASE_URL`.
 5. Aplicar en producción en una ventana acordada, con respaldo confirmado, registrando el resultado de cada archivo.
 6. Verificar RLS (`relrowsecurity = true`) y privilegios de `anon` y `authenticated` (`has_table_privilege` debe ser falso).
 
-Las migraciones deben aplicarse en el orden de la tabla (1 a 10). Cada archivo es transaccional; un fallo a mitad de la secuencia deja las anteriores aplicadas y la siguiente sin ejecutar.
+Las migraciones deben aplicarse en el orden de la tabla (1 a 11). Cada archivo es transaccional; un fallo a mitad de la secuencia deja las anteriores aplicadas y la siguiente sin ejecutar.
 
 ## Qué no se ha hecho
 

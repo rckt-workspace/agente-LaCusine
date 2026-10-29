@@ -156,7 +156,7 @@ $env:TEST_DATABASE_URL = "postgresql://postgres:<contraseña-local>@127.0.0.1:55
 .venv\Scripts\python.exe -m pytest -q tests/integration
 ```
 
-→ 101 pasan (fases 2 a 5.1, incluidos dos procesos independientes sobre la misma cola).
+→ 116 pasan (fases 2 a 5.1; incluye dos procesos independientes sobre la misma cola y roles de mínimo privilegio con RLS).
 
 ### Guard de las pruebas destructivas
 
@@ -171,7 +171,7 @@ Las pruebas de integración reinician el esquema `public`. Por eso exigen **toda
 
 Si `TEST_DATABASE_URL` está definida pero es insegura, el módulo **falla**; no se omite. Las pruebas del guard son unitarias y nunca se conectan a ninguna base.
 
-**Todas:** `python -m pytest -q` → 612 pasan con la base de pruebas (511 unitarias + 101 de integración) y 1 se omite (prueba opcional del catálogo real). Sin base de datos: 511 pasan y 7 se omiten, cada una con su motivo (6 módulos de integración y la prueba opcional).
+**Todas:** `python -m pytest -q` → 627 pasan con la base de pruebas (511 unitarias + 116 de integración) y 1 se omite (prueba opcional del catálogo real). Sin base de datos: 511 pasan y 8 se omiten, cada una con su motivo (7 módulos de integración y la prueba opcional).
 
 Las pruebas que dependen de la base de datos exigen `TEST_DATABASE_URL`; la contraseña del contenedor se pasa solo por variable de entorno del proceso y nunca se escribe en el repositorio.
 
@@ -182,7 +182,7 @@ Las pruebas que dependen de la base de datos exigen `TEST_DATABASE_URL`; la cont
 - **Envío:** `WHATSAPP_DRY_RUN=true` y `META_SEND_ENABLED=false` por defecto. Con ambos desactivados no sale ninguna solicitud a Meta.
 - **Configuración local:** copie `.env.example` a `.env` y active `LACUSINE_LOAD_DOTENV=true` solo en su máquina. Render no usa `.env`.
 - **Despliegue:** `render.yaml` describe el Web Service y el Background Worker. Auto-deploy desactivado. Ver [render-deployment.md](docs/render-deployment.md).
-- **Base de datos:** diez migraciones en orden (la 10 es de la fase 5.1), sin aplicar a Supabase Cloud. Ver [supabase-deployment.md](docs/supabase-deployment.md).
+- **Base de datos:** once migraciones en orden (la 10 es de la fase 5.1 y la 11 añade roles de mínimo privilegio con RLS), sin aplicar a Supabase Cloud. Ver [supabase-deployment.md](docs/supabase-deployment.md).
 - **Variables:** ver [environment-variables.md](docs/environment-variables.md).
 - **Puerta de salida:** ver [go-live-checklist.md](docs/go-live-checklist.md). Ninguna casilla de producción está marcada.
 

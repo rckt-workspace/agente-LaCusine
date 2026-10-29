@@ -91,6 +91,35 @@ Registro de hallazgos. Cada uno incluye la evidencia en el código original (com
 - **"Un handoff duplicado crea dos filas":** no ocurre. La restricción única parcial lo impide.
 - **"Un estado de Meta retrocede":** no ocurre. Las transiciones están en una tabla explícita.
 
+## Revisión final de preproducción
+
+Hallazgos detectados en la verificación de roles, dependencias y arranque. Se corrigen en la misma rama y PR.
+
+### C5. Los roles no propietarios no podían usar la base (crítico, corregido)
+- **Evidencia:** sonda con un rol de login sin `BYPASSRLS` y con privilegios concedidos. `select count(*) from public.leads` devolvía `0` sin error; `insert` fallaba con `new row violates row-level security policy`; `webhook_events` daba `permission denied`. Las tablas tenían RLS activa y ninguna política. El backend solo funcionaba como propietario, que la documentación no permite usar.
+- **Corrección:** migración `20261101100000_app_roles_rls_policies.sql`. Roles de grupo sin login (`lacusine_backend`, `lacusine_admin_ops`), privilegios por tabla según las sentencias reales del código y políticas solo para esos grupos. Los roles de login se crean fuera del repositorio.
+- **Prueba:** `tests/integration/test_roles_rls_postgres.py` (15 pruebas), con conexiones reales de cada rol. Sin la migración, fallan el flujo de la aplicación, el de administración y el E2E (el webhook devuelve 503).
+- **Verificado:** `anon`, `authenticated` y `public` no tienen políticas ni privilegios. La auditoría es de solo adición, incluso para el rol administrativo.
+
+### A5. Vulnerabilidad moderada en dependencias (alta, corregida)
+- **Advisory:** CVE-2025-71176 / GHSA-6w46-j5rx-g56g, `pytest` anterior a 9.0.3, "vulnerable tmpdir handling".
+- **Alcance:** dependencia directa de desarrollo (`requirements-dev.txt`), no de ejecución. No afecta a la API ni al worker en producción.
+- **Corrección:** `pytest==8.4.2` → `pytest==9.0.3`, la versión corregida mínima. No se cambió nada más. Suite completa ejecutada después del cambio.
+
+### M5. `/ready` revelaba el motivo de la falta de configuración (medio, corregido)
+- **Evidencia:** sin base, devolvía `{"status": "not_configured"}`, distinto de `unavailable`. La documentación dice "sin detalles".
+- **Corrección:** ambos casos devuelven `{"status": "unavailable"}` con 503.
+
+### M6. Comentario de `render.yaml` (bajo, sin defecto)
+- Durante la revisión, un reemplazo mío duplicó una palabra en un comentario. Se restauró y se comprobó que el archivo coincide con el original. El contrato de Render no cambió.
+
+## Limitaciones de la revisión final
+
+1. **Supabase Cloud no se ha probado.** Los roles y privilegios se han probado solo en PostgreSQL local desechable. Supabase puede tener particularidades en sus roles por defecto.
+2. **El pooler en modo transacción (6543) no se ha probado** con un servicio real. La compatibilidad se apoya en el diseño (`prepare_threshold=None`) y en la documentación.
+3. **El apagado con `SIGTERM` en Windows no es concluyente** (código 143 al terminar desde Git Bash). Debe comprobarse en Linux, el entorno de Render.
+4. **La auditoría sigue siendo modificable por un rol propietario.** Ninguna política evita que el propietario del esquema actúe; solo lo impide la separación de roles.
+
 ## Limitaciones que permanecen
 
 1. **Una sola línea de negocio.** Diseño intencional del MVP, no aislamiento multi-tenant.

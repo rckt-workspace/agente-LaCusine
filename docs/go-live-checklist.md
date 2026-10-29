@@ -25,8 +25,10 @@ Estado actual: **todas las casillas de integración están abiertas.** Las de c�
 
 ## 3. Base de datos (Supabase)
 
-- [ ] Las migraciones 1 a 10 se aplicaron en un proyecto de prueba aislado sin errores.
-- [ ] Rol administrativo de la CLI creado, distinto del rol del backend, sin `delete` ni `truncate` sobre `admin_audit_log`.
+- [ ] Las migraciones 1 a 11 se aplicaron en un proyecto de prueba aislado sin errores.
+- [ ] Roles de login creados fuera del repositorio y asociados a `lacusine_backend` y `lacusine_admin_ops`. Ninguno es `SUPERUSER`, `BYPASSRLS` ni propietario del esquema.
+- [ ] La aplicación no se conecta como `postgres` ni con `service_role` (comprobar `DATABASE_URL` y `LACUSINE_ADMIN_DATABASE_URL` en el panel).
+- [ ] Permisos verificados con conexiones reales de cada rol en el proyecto de prueba: denegaciones de `anon`, `authenticated` y de la auditoría.
 - [ ] Respaldo o punto de restauración confirmado antes de aplicar en producción.
 - [ ] Rol del backend creado con mínimo privilegio y verificado.
 - [ ] RLS activa en todas las tablas; `anon` y `authenticated` sin privilegios (verificado con consultas de solo lectura).
