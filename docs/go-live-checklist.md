@@ -25,7 +25,8 @@ Estado actual: **todas las casillas de integración están abiertas.** Las de c�
 
 ## 3. Base de datos (Supabase)
 
-- [ ] Las migraciones 1 a 9 se aplicaron en un proyecto de prueba aislado sin errores.
+- [ ] Las migraciones 1 a 10 se aplicaron en un proyecto de prueba aislado sin errores.
+- [ ] Rol administrativo de la CLI creado, distinto del rol del backend, sin `delete` ni `truncate` sobre `admin_audit_log`.
 - [ ] Respaldo o punto de restauración confirmado antes de aplicar en producción.
 - [ ] Rol del backend creado con mínimo privilegio y verificado.
 - [ ] RLS activa en todas las tablas; `anon` y `authenticated` sin privilegios (verificado con consultas de solo lectura).
@@ -43,9 +44,13 @@ Estado actual: **todas las casillas de integración están abiertas.** Las de c�
 
 ## 5. Operación
 
-- [ ] Background Worker desplegado con `WORKER_ENABLED=false` y revisado en logs (`worker_started` sin errores de configuración).
-- [ ] Procedimiento de revisión de `manual_review` y de reservas `uncertain` definido, con responsable.
-- [ ] Procedimiento de conciliación de envíos `uncertain` definido, con responsable.
+- [ ] Background Worker desplegado con `WORKER_ENABLED=false` y en estado de espera (`worker_standby`), sin reinicios continuos en el panel.
+- [ ] Prueba de arranque del worker con procesos reales (`tests/test_worker_process.py`) ejecutada en el entorno de despliegue.
+- [ ] Procedimiento de revisión de `manual_review` y de reservas `uncertain` definido, con responsable, usando `python -m app.admin.cli` (ver [worker.md](worker.md)).
+- [ ] Procedimiento de conciliación de envíos `uncertain` definido, con responsable. Ningún envío `uncertain` se resuelve sin evidencia externa (referencia de Meta o prueba de no facturación).
+- [ ] Unidad de `timestamp` de Meta verificada con un mensaje real de prueba (la ventana depende de ella).
+- [ ] Ventana de 24 horas probada con un mensaje antiguo de la cola y con un mensaje reciente.
+- [ ] Procedimiento de carga de catálogo definido sin importación automática a la base real (ver [catalogo-operacion.md](catalogo-operacion.md)).
 - [ ] Monitoreo de `/health`, `/ready` y del conteo de estados en la base.
 - [ ] Plan de rollback documentado y ensayado (redespliegue del commit anterior).
 - [ ] Autoriza el equipo legal la retención de `WEBHOOK_EVENT_RETENTION_DAYS` y de los contenidos de mensajes.

@@ -46,7 +46,7 @@
 <div class="mini"><h3>Reintentos y revisión manual</h3><p>Backoff exponencial con jitter para errores transitorios; error permanente a dead_letter; resultado incierto a manual_review sin reenvío.</p></div>
 <div class="mini"><h3>Presupuesto con reservas</h3><p>Reserva persistente antes de cada llamada facturable, bajo bloqueo de transacción. Prueba con 8 hilos: nunca se supera el límite diario.</p></div>
 <div class="mini"><h3>Outbox transaccional</h3><p>Respuesta generada y estado comercial en una transacción. Una respuesta por evento. Estado pending: generada, no enviada.</p></div>
-<div class="mini"><h3>Transferencia humana</h3><p>Escalamiento idempotente con motivo y prioridad; bloqueo de respuestas automáticas mientras un asesor controla la conversación.</p></div>
+<div class="mini"><h3>Transferencia humana</h3><p>Escalamiento idempotente en una sola transacción: pausa la automatización, cancela respuestas de IA pendientes y envía una única confirmación fija. Un mensaje nuevo del cliente no reactiva la IA; solo lo hace una reactivación auditada.</p></div>
 <div class="mini"><h3>Retención segura</h3><p>Solo se eliminan estados finales. Pendientes, en proceso y en revisión se conservan.</p></div>
 </div>
 <h3 class="step" style="margin-top:18px">IMPLEMENTADO, PENDIENTE DE CONEXIÓN REAL</h3>
@@ -57,17 +57,17 @@
 </div>
 <h3 class="step" style="margin-top:18px">NO IMPLEMENTADO</h3>
 <div class="cols">
-<div class="mini"><h3>Envío a WhatsApp</h3><p>Las respuestas quedan en outbox como pending. El adaptador de envío es la Fase 5.</p></div>
+<div class="mini"><h3>Envío real a clientes</h3><p>El adaptador y el dispatcher existen y están probados con transporte simulado, pero desactivados. Ningún mensaje real se ha enviado.</p></div>
 <div class="mini"><h3>Notificación a asesores</h3><p>La solicitud se registra, pero no se avisa a nadie (correo, WhatsApp o Teams).</p></div>
-<div class="mini"><h3>Conciliación automática</h3><p>Las reservas en uncertain o reserved requieren revisión manual. No hay herramienta para resolverlas.</p></div>
+<div class="mini"><h3>Conciliación automática</h3><p>Las reservas uncertain o reserved y los envíos uncertain requieren revisión manual. Existe una CLI de conciliación con guardas y auditoría, sin automatizar las decisiones.</p></div>
 </div>
-<p class="foot">Ejecución: python -m app.worker.main con WORKER_ENABLED=true. Por defecto está desactivado. Detalles en docs/worker.md.</p></section>
+<p class="foot">Ejecución: python -m app.worker.main. Con WORKER_ENABLED distinto de true queda en espera sin consumir la cola ni salir. Detalles en docs/worker.md.</p></section>
 <section id="whatsapp" class="surface flowhidden"><h2 class="heading">Integración WhatsApp Cloud API y Render</h2><p class="sub">Salida de mensajes diseñada, probada y desactivada por defecto. Nada de esta pestaña envía mensajes reales ni está desplegado.</p>
 <h3 class="step" style="margin-top:18px">IMPLEMENTADO Y PROBADO LOCALMENTE</h3>
 <div class="cols">
 <div class="mini"><h3>Adaptador Cloud API</h3><p>POST a Graph API con versión configurable. Errores tipados con resultado explícito: no enviado, o incierto. Sin reintento sobre resultados inciertos.</p></div>
 <div class="mini"><h3>Envío desactivado por defecto</h3><p>Dos interruptores (META_SEND_ENABLED y WHATSAPP_DRY_RUN) y lista de destinatarios autorizados. Configuración inválida falla cerrada.</p></div>
-<div class="mini"><h3>Dispatcher del outbox</h3><p>Reclamo con lease y orden por conversación. Cancela si un asesor tiene el control y bloquea fuera de la ventana de 24 horas.</p></div>
+<div class="mini"><h3>Dispatcher del outbox</h3><p>Reclamo con lease y orden por conversación. Cancela si un asesor tiene el control, bloquea fuera de la ventana de 24 horas medida con la hora de Meta y rechaza salidas de otra línea de negocio.</p></div>
 <div class="mini"><h3>Estados de Meta</h3><p>sent, delivered y read llegan por webhook y solo avanzan. Un estado que llega antes que el envío se reintenta, nunca se pierde.</p></div>
 <div class="mini"><h3>Seguridad del webhook</h3><p>Firma HMAC, límites de tamaño y estados persistidos como eventos separados, sin contacto.</p></div>
 <div class="mini"><h3>Flujo extremo a extremo simulado</h3><p>Webhook firmado → worker → IA simulada → outbox → envío simulado → estado entregado, con duplicados sin efecto.</p></div>

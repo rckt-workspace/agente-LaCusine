@@ -27,7 +27,20 @@ Estado: **preparado, no ejecutado.** El archivo [`render.yaml`](../render.yaml) 
 - Comando de inicio: `python -m app.worker.main`.
 - **No admite `healthCheckPath`.** Render solo lo ofrece para web services. La supervisión del worker se hace por sus logs (`worker_started`, `dispatch_cycle`, `job_finished`) y por el conteo de la base.
 - Apagado: Render envía SIGTERM. El worker deja de reclamar trabajos nuevos y espera a los que están en curso (`Worker.shutdown`).
-- Con `WORKER_ENABLED=false` (valor en el blueprint) el proceso sale sin consumir la cola. Se activa a propósito, en la fase de salida.
+- Con `WORKER_ENABLED=false` (valor en el blueprint) el proceso queda **en espera**: vivo, sin conectarse a la base, sin consumir la cola y con un latido en log cada 10 minutos. No sale, para no entrar en bucle de reinicios.
+- Se activa a propósito, en la fase de salida, solo después de comprobar los efectos ([go-live-checklist.md](go-live-checklist.md)).
+
+### Estados operativos
+
+| Estado | Señal en el panel y en logs | Acción |
+|---|---|---|
+| No creado | El Blueprint no se ha aplicado | Ninguna |
+| Detenido | Servicio parado manualmente | Ninguna |
+| En espera | Estado "running"; log `worker_standby consuming=false` | Correcto mientras no se autorice |
+| Consumiendo | Log `worker_started`, luego `job_finished` | Solo con autorización |
+| Fallo de configuración | Salida con código 2 y mensaje que nombra la variable | Corregir variable en el panel |
+
+El worker en espera no es un error. Un reinicio continuo indica fallo de configuración, no un estado normal.
 
 Un solo Background Worker ejecuta el procesamiento de eventos **y** el despacho de salidas, porque comparten ciclo de vida, base y supervisión. Un segundo servicio solo aportaría costo; no se añade.
 

@@ -17,10 +17,13 @@ Las migraciones son incrementales y se aplican **en este orden exacto**. Cada ar
 | 7 | `20261029100000_worker_queue.sql` | 4 | Cola: leases, `contact_leases`, `outbound_messages`, `budget_reservations` |
 | 8 | `20261029100100_retention_worker_safe.sql` | 4 | Retención que solo elimina estados finales |
 | 9 | `20261030100000_whatsapp_delivery.sql` | 5 | Estados de entrega, lease de envío, eventos de estado |
+| 10 | `20261031100000_phase_5_1_hardening.sql` | 5.1 | Marca de ventana confiable, tipo de salida (`reply`/`handoff_notice`), línea de negocio en salidas, precio confirmado y `admin_audit_log` |
 
 La migración 3 queda reemplazada en efecto por la 8. Ninguna se edita: el historial se conserva.
 
-**Antes de aplicar:** las migraciones de las fases 2 a 5 se probaron en PostgreSQL 16 local, todas en una sola ejecución. Eso no garantiza el comportamiento idéntico en Supabase. Verificar en un proyecto de prueba aislado antes de producción.
+La migración 10 añade `admin_audit_log` con RLS activa con `update`, `delete` y `truncate` revocados a `public`, `anon` y `authenticated`, de modo que el backend y los roles públicos no pueden reescribir el historial de decisiones administrativas. Un rol con privilegios de propietario aún puede alterarla: ese riesgo queda en el registro de auditoría como limitación.
+
+**Antes de aplicar:** las migraciones de las fases 2 a 5.1 se probaron en PostgreSQL 16 local, todas en una sola ejecución. Eso no garantiza el comportamiento idéntico en Supabase. Verificar en un proyecto de prueba aislado antes de producción.
 
 ## Compatibilidad con PostgreSQL de Supabase
 
@@ -87,8 +90,11 @@ Los modos siguientes provienen de la documentación oficial de Supabase; **verif
 1. Crear un proyecto Supabase de **prueba** aislado y aplicar las 9 migraciones en orden.
 2. Las pruebas destructivas **nunca** se ejecutan contra Supabase: el guard rechaza hosts de Supabase y exige una base de loopback. La verificación en la nube se limita a `/ready` y consultas de solo lectura.
 3. Crear el rol del backend y verificar que no puede leer `auth` ni escribir fuera de las tablas.
-4. Aplicar en producción en una ventana acordada, con respaldo confirmado, registrando el resultado de cada archivo.
-5. Verificar RLS (`relrowsecurity = true`) y privilegios de `anon` y `authenticated` (`has_table_privilege` debe ser falso).
+4. Crear, si se usará la CLI de conciliación, un rol administrativo **distinto**: `select` e `insert` sobre `admin_audit_log`, y `update` solo sobre las tablas que la CLI modifica. Nunca `delete` ni `truncate` sobre la auditoría. Su conexión va en `LACUSINE_ADMIN_DATABASE_URL`.
+5. Aplicar en producción en una ventana acordada, con respaldo confirmado, registrando el resultado de cada archivo.
+6. Verificar RLS (`relrowsecurity = true`) y privilegios de `anon` y `authenticated` (`has_table_privilege` debe ser falso).
+
+Las migraciones deben aplicarse en el orden de la tabla (1 a 10). Cada archivo es transaccional; un fallo a mitad de la secuencia deja las anteriores aplicadas y la siguiente sin ejecutar.
 
 ## Qué no se ha hecho
 
