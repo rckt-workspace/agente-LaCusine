@@ -57,10 +57,12 @@ class Worker:
         clock=time.monotonic,
         token_factory=uuid.uuid4,
         rng: random.Random | None = None,
+        dispatcher=None,
     ) -> None:
         self._settings = settings
         self._jobs = jobs
         self._processor = processor
+        self._dispatcher = dispatcher
         self._stop = stop_event or threading.Event()
         self._sleep = sleep
         self._clock = clock
@@ -89,7 +91,21 @@ class Worker:
             self.metrics.claimed += len(claims)
         futures = [self._executor.submit(self._run_claim, claim) for claim in claims]
         wait(futures)
+        if self._dispatcher is not None:
+            self._dispatch()
         return len(claims)
+
+    def _dispatch(self) -> None:
+        """Despacha salidas pendientes en el mismo proceso. Un fallo de la base no detiene el bucle."""
+        try:
+            stats = self._dispatcher.dispatch_once()
+        except StorageError as exc:
+            logger.error("dispatch_cycle_failed code=%s", exc.args[0] if exc.args else "storage_error")
+            return
+        if stats.claimed:
+            logger.info("dispatch_cycle claimed=%d sent=%d retry=%d failed=%d uncertain=%d blocked=%d cancelled=%d "
+                        "expired=%d", stats.claimed, stats.sent, stats.pending_retry, stats.failed,
+                        stats.uncertain, stats.blocked, stats.cancelled, stats.expired)
 
     def run_forever(self) -> None:
         logger.info("worker_started owner=%s concurrency=%d", self._settings.owner, self._settings.max_concurrency)

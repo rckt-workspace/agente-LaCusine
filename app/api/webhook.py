@@ -13,7 +13,7 @@ from fastapi import APIRouter, HTTPException, Request, Response, status
 from fastapi.responses import PlainTextResponse
 
 from app.core.logging_utils import logger, mask_phone
-from app.models.webhook import PayloadValidationError, extract_inbound_messages
+from app.models.webhook import PayloadValidationError, extract_inbound_messages, extract_statuses
 from app.repositories.errors import StorageError
 from app.repositories.webhook_events import RegisterOutcome, WebhookEventRecord
 from app.security.signature import verify_meta_signature
@@ -94,6 +94,27 @@ async def receive_webhook(request: Request) -> Response:
             # Mismo wamid con contenido distinto: no se sobrescribe; queda registrado para revisión.
             conflicts += 1
             logger.warning("inbound_message_conflict")
+
+    # Estados de entrega: se registran para correlacionarlos con el outbox. No cuentan en la respuesta de mensajes.
+    try:
+        statuses = extract_statuses(payload, max_items=settings.max_messages_per_request * 4)
+    except PayloadValidationError as exc:
+        logger.warning("webhook_payload_rejected reason=%s", exc)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid_payload")
+    for event in statuses:
+        record = WebhookEventRecord(
+            external_event_id=event.external_event_id,
+            contact_wa_id=None,
+            payload=event.raw,
+            payload_sha256=event.payload_sha256,
+            event_type="status",
+            business_phone_id=event.business_phone_id,
+        )
+        try:
+            repository.register(record)
+        except StorageError as exc:
+            logger.error("webhook_storage_failed reason=%s", exc)
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="storage_unavailable")
 
     return Response(
         content=json.dumps({"accepted": accepted, "duplicates": duplicates, "conflicts": conflicts}),

@@ -14,6 +14,7 @@ from app.agent.orchestrator import AgentOutcome, OutcomeStatus
 from app.agent.safety import SAFE_REPLY_HUMAN
 from app.agent.schemas import LeadStage
 from app.repositories.jobs import Claim
+from app.repositories.outbound import META_STATUSES
 from app.worker.errors import ManualReviewRequired, PermanentJobError
 
 UNSUPPORTED_TYPE_REPLY = (
@@ -49,8 +50,10 @@ class EventProcessor:
         handoffs,
         outbox,
         retention_days: int,
+        outbound=None,
         clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
     ) -> None:
+        self._outbound = outbound
         self._agent = agent
         self._leads = leads
         self._conversations = conversations
@@ -61,6 +64,8 @@ class EventProcessor:
         self._clock = clock
 
     def process(self, claim: Claim, renew: Callable[[], bool]) -> ProcessResult:
+        if claim.event_type == "status":
+            return self._process_status(claim)
         message_type = str(claim.payload.get("type", "unknown"))
         contact = claim.contact_wa_id
         if not contact:
@@ -89,6 +94,23 @@ class EventProcessor:
 
         outcome: AgentOutcome = self._agent.handle(conversation_id, body, claim.external_event_id)
         return self._apply_outcome(claim, conversation_id, lead_id, outcome, now)
+
+    def _process_status(self, claim: Claim) -> ProcessResult:
+        """Estado de entrega de Meta. Si el envío aún no tiene identificador, se reintenta: nunca se pierde."""
+        message_id = claim.payload.get("id")
+        status = claim.payload.get("status")
+        if not isinstance(message_id, str) or not isinstance(status, str):
+            raise PermanentJobError("invalid_status_payload")
+        if self._outbound is None:
+            raise PermanentJobError("status_handler_missing")
+        if status not in META_STATUSES:
+            return ProcessResult(status="ignored", error_code="unknown_status")
+        result = self._outbound.apply_meta_status(message_id, status, _status_error_code(claim.payload))
+        if result == "unmatched":
+            return ProcessResult(status="retry", error_code="status_unmatched", retry=True)
+        if result == "applied":
+            return ProcessResult(status="processed", error_code=status)
+        return ProcessResult(status="ignored", error_code="no_transition")
 
     def _apply_outcome(self, claim, conversation_id, lead_id, outcome: AgentOutcome, now) -> ProcessResult:
         status = outcome.status
@@ -142,6 +164,13 @@ class EventProcessor:
         if ignored_reason is not None:
             return ProcessResult(status="ignored", error_code=ignored_reason)
         return ProcessResult(status="processed", error_code=error_code)
+
+
+def _status_error_code(payload: dict) -> str | None:
+    errors = payload.get("errors")
+    if isinstance(errors, list) and errors and isinstance(errors[0], dict) and errors[0].get("code") is not None:
+        return str(errors[0]["code"])[:64]
+    return None
 
 
 def _text_body(payload: dict) -> str:
