@@ -106,7 +106,13 @@ class OutboxDispatcher:
         if context is None or not context.wa_contact_id:
             self._close(claim, "failed", stats, "missing_destination")
             return
-        if context.automation_state != "automated":
+        if claim.business_phone_id != self._phone:
+            # Una salida solo sale desde la línea de negocio con la que se generó.
+            self._close(claim, "failed", stats, "business_line_mismatch")
+            return
+        # Una respuesta de IA deja de ser válida si un asesor tomó la conversación. La confirmación de
+        # transferencia sí se envía: anuncia precisamente el cambio de control.
+        if claim.kind == "reply" and context.automation_state != "automated":
             self._close(claim, "cancelled", stats, "human_control")
             return
         if not window_open(context.last_inbound_at, now):

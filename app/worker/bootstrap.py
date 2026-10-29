@@ -36,6 +36,9 @@ def build_worker(settings: Settings, worker_settings: WorkerSettings, stop_event
     """
     if not settings.database_url:
         raise ValueError("database_url_missing")
+    if not settings.meta_phone_number_id:
+        # Sin línea de negocio el worker no puede aislar conversaciones: falla cerrado al arrancar.
+        raise ValueError("meta_phone_number_id_missing")
 
     pool = create_pool(settings.database_url, min_size=1, max_size=worker_settings.max_concurrency + 2)
     handoffs = PostgresHandoffRepository(pool)
@@ -73,6 +76,7 @@ def build_worker(settings: Settings, worker_settings: WorkerSettings, stop_event
         handoffs=handoffs,
         outbox=outbox,
         retention_days=settings.webhook_event_retention_days,
+        expected_business_phone_id=settings.meta_phone_number_id,
         outbound=outbound,
     )
     jobs = JobRepository(pool, owner=worker_settings.owner, lease_seconds=worker_settings.lease_seconds)

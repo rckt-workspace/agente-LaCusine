@@ -75,7 +75,7 @@ def _conversation(contact, last_inbound: datetime | None, state="automated"):
         if last_inbound is not None:
             conn.execute(
                 "insert into public.messages (conversation_id, direction, wa_message_id, message_type, received_at, "
-                "content_text, content_expires_at) values (%s, 'inbound', %s, 'text', %s, 'hola', %s)",
+                "content_text, content_expires_at, window_trusted) values (%s, 'inbound', %s, 'text', %s, 'hola', %s, true)",
                 (conv, f"wamid.IN-{uuid.uuid4().hex[:8]}", last_inbound, last_inbound + timedelta(days=7)),
             )
     return conv
@@ -86,8 +86,9 @@ def _outbound(conv, key, content="Tenemos varias opciones.", created=None, next_
     with psycopg.connect(TEST_DATABASE_URL, autocommit=True) as conn:
         return conn.execute(
             "insert into public.outbound_messages (idempotency_key, conversation_id, content_text, created_at, "
-            "next_attempt_at, delivery_status) values (%s, %s, %s, %s, coalesce(%s, now()), %s) returning id",
-            (key, conv, content, created, next_attempt, status),
+            "next_attempt_at, delivery_status, business_phone_id) values (%s, %s, %s, %s, coalesce(%s, now()), %s, %s) "
+            "returning id",
+            (key, conv, content, created, next_attempt, status, PHONE_ID),
         ).fetchone()[0]
 
 
@@ -116,10 +117,12 @@ def _status_webhook(client, message_id, status):
     return client.post("/webhook", content=body, headers={"X-Hub-Signature-256": _sign(body)})
 
 
-def _message_webhook(client, wamid, body_text):
+def _message_webhook(client, wamid, body_text, timestamp=None):
+    stamp = str(int(time.time())) if timestamp is None else timestamp
     body = json.dumps({"entry": [{"changes": [{"value": {
         "messaging_product": "whatsapp", "metadata": {"phone_number_id": PHONE_ID},
-        "messages": [{"from": RECIPIENT, "id": wamid, "type": "text", "text": {"body": body_text}}],
+        "messages": [{"from": RECIPIENT, "id": wamid, "timestamp": stamp, "type": "text",
+                      "text": {"body": body_text}}],
     }}]}]}).encode()
     return client.post("/webhook", content=body, headers={"X-Hub-Signature-256": _sign(body)})
 
@@ -336,7 +339,7 @@ def test_meta_confirmation_recovers_an_uncertain_send():
 def test_database_loss_during_dispatch_does_not_crash_the_worker_loop():
     pool = _pool()
     worker_settings = WorkerSettings(enabled=True, owner="resilience", lease_seconds=60, processing_timeout_seconds=30)
-    settings = Settings(meta_app_secret=None, meta_verify_token=None, database_url=TEST_DATABASE_URL)
+    settings = Settings(meta_app_secret=None, meta_verify_token=None, database_url=TEST_DATABASE_URL, meta_phone_number_id=PHONE_ID)
     worker, worker_pool = build_worker(settings, worker_settings, sender=SimulatedWhatsAppSender())
     worker_pool.open(wait=True, timeout=10)
     try:

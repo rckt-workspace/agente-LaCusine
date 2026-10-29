@@ -1,6 +1,8 @@
 """Contrato de configuración y despliegue: el envío real arranca desactivado y no hay secretos versionados."""
 
 import re
+
+import pytest
 from pathlib import Path
 
 from app.core.config import Settings
@@ -90,3 +92,29 @@ def test_render_secret_names_never_get_literal_values():
     for name, body in pattern.findall(text):
         if SECRET_NAME.search(name):
             assert body == "sync: false", name
+
+
+def test_real_env_variants_are_ignored_by_git():
+    import shutil
+    import subprocess
+
+    if shutil.which("git") is None:
+        pytest.skip("git no disponible")
+    variants = [".env", ".env.local", ".env.production", ".env.test.local", ".env.staging"]
+    for name in variants:
+        result = subprocess.run(["git", "check-ignore", "-q", name], cwd=ROOT, capture_output=True)
+        assert result.returncode == 0, f"{name} no está ignorado por Git"
+    result = subprocess.run(["git", "check-ignore", "-q", ".env.example"], cwd=ROOT, capture_output=True)
+    assert result.returncode != 0, ".env.example debe seguir versionado"
+
+
+def test_commercial_spreadsheets_and_pdfs_are_ignored_by_git():
+    import shutil
+    import subprocess
+
+    if shutil.which("git") is None:
+        pytest.skip("git no disponible")
+    # El XLSX original del catálogo y los PDF comerciales no deben entrar al repositorio público.
+    for name in ["catalogo.xlsx", "catalogo.xls", "lista.pdf", "precios.csv"]:
+        result = subprocess.run(["git", "check-ignore", "-q", name], cwd=ROOT, capture_output=True)
+        assert result.returncode == 0, f"{name} no está ignorado por Git"

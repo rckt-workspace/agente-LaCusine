@@ -34,6 +34,8 @@ class OutboxRepository:
         lead_id: UUID,
         lead_status: str | None,
         reply_text: str | None,
+        kind: str = "reply",
+        business_phone_id: str | None = None,
     ) -> bool:
         """Crea la respuesta pendiente y actualiza el estado comercial en UNA transacción.
 
@@ -46,16 +48,28 @@ class OutboxRepository:
             with self._pool.connection() as conn:
                 with conn.transaction():
                     created = False
+                    if kind == "handoff_notice":
+                        # La transferencia cancela cualquier respuesta de IA aún no despachada.
+                        conn.execute(
+                            """
+                            update public.outbound_messages
+                            set delivery_status = 'cancelled', last_error_code = 'handoff_opened'
+                            where conversation_id = %s and kind = 'reply' and delivery_status = 'pending'
+                            """,
+                            (conversation_id,),
+                        )
                     if reply_text is not None:
                         row = conn.execute(
                             """
                             insert into public.outbound_messages
-                                (idempotency_key, webhook_event_id, conversation_id, content_text, expires_at)
-                            values (%s, %s, %s, %s, now() + make_interval(days => %s))
+                                (idempotency_key, webhook_event_id, conversation_id, content_text, expires_at,
+                                 kind, business_phone_id)
+                            values (%s, %s, %s, %s, now() + make_interval(days => %s), %s, %s)
                             on conflict do nothing
                             returning id
                             """,
-                            (idempotency_key, event_id, conversation_id, reply_text, self._retention.days),
+                            (idempotency_key, event_id, conversation_id, reply_text, self._retention.days, kind,
+                             business_phone_id),
                         ).fetchone()
                         created = row is not None
                     if lead_status is not None:

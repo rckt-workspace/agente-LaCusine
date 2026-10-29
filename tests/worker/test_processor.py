@@ -51,9 +51,10 @@ class FakeMessages:
         self.inbound: list[dict] = []
 
     def record_inbound(self, conversation_id, wa_message_id, message_type, received_at, content_text=None,
-                       content_expires_at=None):
+                       content_expires_at=None, window_trusted=False):
         self.inbound.append({"wa": wa_message_id, "type": message_type, "text": content_text,
-                             "expires": content_expires_at})
+                             "expires": content_expires_at, "received_at": received_at,
+                             "window_trusted": window_trusted})
         return True
 
 
@@ -91,6 +92,7 @@ def _processor(agent, outbox=None, handoffs=None, messages=None):
     return EventProcessor(
         agent=agent, leads=FakeLeads(), conversations=FakeConversations(), messages=messages or FakeMessages(),
         handoffs=handoffs or FakeHandoffs(), outbox=outbox or FakeOutbox(), retention_days=7,
+        expected_business_phone_id="1",
     )
 
 

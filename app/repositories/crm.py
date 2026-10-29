@@ -93,8 +93,13 @@ class PostgresMessageRepository:
         received_at: datetime,
         content_text: str | None = None,
         content_expires_at: datetime | None = None,
+        window_trusted: bool = False,
     ) -> bool:
-        """Registra un mensaje entrante. Devuelve False si ese wamid ya estaba registrado."""
+        """Registra un mensaje entrante. Devuelve False si ese wamid ya estaba registrado.
+
+        window_trusted=True solo si received_at es la hora del evento de Meta y es confiable.
+        Solo esos mensajes abren la ventana de atención de 24 horas.
+        """
         if message_type not in MESSAGE_TYPES:
             raise ValueError("message_type_invalid")
         if content_text is not None and content_expires_at is None:
@@ -106,12 +111,13 @@ class PostgresMessageRepository:
                     """
                     insert into public.messages
                         (conversation_id, direction, wa_message_id, message_type,
-                         received_at, content_text, content_expires_at)
-                    values (%s, 'inbound', %s, %s, %s, %s, %s)
+                         received_at, content_text, content_expires_at, window_trusted)
+                    values (%s, 'inbound', %s, %s, %s, %s, %s, %s)
                     on conflict (wa_message_id) where wa_message_id is not null do nothing
                     returning id
                     """,
-                    (conversation_id, wa_message_id, message_type, received_at, content_text, content_expires_at),
+                    (conversation_id, wa_message_id, message_type, received_at, content_text, content_expires_at,
+                     window_trusted),
                 ).fetchone()
         except (psycopg.Error, PoolClosed):
             raise StorageError("message_write_failed") from None
@@ -123,27 +129,50 @@ class PostgresHandoffRepository:
         self._pool = pool
 
     def open(self, conversation_id: UUID, reason: str, priority: str = "normal") -> UUID:
-        """Abre una solicitud de asesor. Si ya existe una activa para la conversación, devuelve esa."""
+        """Abre una solicitud de asesor y transfiere el control de la conversación. Operación atómica.
+
+        En la misma transacción:
+          1. Registra la solicitud (idempotente: una activa por conversación).
+          2. Pausa la automatización (automated -> paused_for_human). Solo la reactivación administrativa la revierte.
+          3. Cancela las respuestas de IA pendientes de esa conversación: son anteriores a la transferencia.
+        """
         if reason not in HANDOFF_REASONS:
             raise ValueError("handoff_reason_invalid")
         if priority not in HANDOFF_PRIORITIES:
             raise ValueError("handoff_priority_invalid")
         try:
             with self._pool.connection() as conn:
-                conn.execute(
-                    """
-                    insert into public.human_handoffs (conversation_id, reason, priority) values (%s, %s, %s)
-                    on conflict (conversation_id) where status in ('open', 'assigned') do nothing
-                    """,
-                    (conversation_id, reason, priority),
-                )
-                row = conn.execute(
-                    """
-                    select id from public.human_handoffs
-                    where conversation_id = %s and status in ('open', 'assigned')
-                    """,
-                    (conversation_id,),
-                ).fetchone()
+                with conn.transaction():
+                    conn.execute(
+                        """
+                        insert into public.human_handoffs (conversation_id, reason, priority) values (%s, %s, %s)
+                        on conflict (conversation_id) where status in ('open', 'assigned') do nothing
+                        """,
+                        (conversation_id, reason, priority),
+                    )
+                    row = conn.execute(
+                        """
+                        select id from public.human_handoffs
+                        where conversation_id = %s and status in ('open', 'assigned')
+                        """,
+                        (conversation_id,),
+                    ).fetchone()
+                    conn.execute(
+                        """
+                        update public.conversations
+                        set automation_state = 'paused_for_human'
+                        where id = %s and status <> 'closed' and automation_state = 'automated'
+                        """,
+                        (conversation_id,),
+                    )
+                    conn.execute(
+                        """
+                        update public.outbound_messages
+                        set delivery_status = 'cancelled', last_error_code = 'handoff_opened'
+                        where conversation_id = %s and kind = 'reply' and delivery_status = 'pending'
+                        """,
+                        (conversation_id,),
+                    )
         except (psycopg.Error, PoolClosed):
             raise StorageError("handoff_write_failed") from None
         if row is None:

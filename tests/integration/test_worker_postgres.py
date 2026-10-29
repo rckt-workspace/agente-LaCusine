@@ -483,8 +483,9 @@ def test_reservation_with_limit_per_interaction_is_rejected_before_writing():
 def test_end_to_end_webhook_to_outbox_with_simulated_provider():
     pool = _pool()
     try:
-        _insert(pool, "wamid.E2E", contact="573004440099", body="Busco una cafetera Jura")
-        settings = Settings(meta_app_secret=None, meta_verify_token=None, database_url=TEST_DATABASE_URL)
+        _insert(pool, "wamid.E2E", contact="573004440099", phone="100200300400", body="Busco una cafetera Jura")
+        settings = Settings(meta_app_secret=None, meta_verify_token=None, database_url=TEST_DATABASE_URL,
+                            meta_phone_number_id="100200300400")
         worker_settings = WorkerSettings(enabled=True, owner="e2e", max_concurrency=2, lease_seconds=60,
                                          processing_timeout_seconds=30)
         worker, worker_pool = build_worker(settings, worker_settings)
