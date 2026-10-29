@@ -2,7 +2,7 @@
 
 Agente comercial de WhatsApp para La Cuisine Appliances Colombia (WhatsApp Cloud API + Claude API + FastAPI + Supabase).
 
-> **Estado: Fases 1 a 4 implementadas en el repositorio.** El webhook persiste eventos de forma idempotente; el worker procesa la cola con leases, orden por contacto, reintentos y presupuesto con reservas; el motor comercial de IA se prueba con un proveedor simulado. **No hay conexión a WhatsApp, no se llama a Claude, no se aplican migraciones en Supabase real, no hay despliegues y no hay envíos.**
+> **Estado: Fases 1 a 5 implementadas en el repositorio.** La Fase 5 añade el adaptador de WhatsApp Cloud API y el dispatcher de salidas, **desactivados por defecto**. El webhook persiste eventos de forma idempotente; el worker procesa la cola con leases, orden por contacto, reintentos y presupuesto con reservas; el motor comercial de IA se prueba con un proveedor simulado. **No hay conexión a WhatsApp, no se llama a Claude, no se aplican migraciones en Supabase real, no hay despliegues y no hay envíos.**
 
 Documentación: [`docs/arquitectura.html`](docs/arquitectura.html) · [`docs/modelo-datos.md`](docs/modelo-datos.md) · [`docs/agente-ia.md`](docs/agente-ia.md)
 
@@ -14,8 +14,8 @@ Documentación: [`docs/arquitectura.html`](docs/arquitectura.html) · [`docs/mod
 | 2 | Migraciones Supabase, RLS, repositorios, deduplicación persistente, importador CSV | Implementada y probada en PostgreSQL local. **Sin aplicar a Supabase real.** |
 | 3 | Motor comercial de IA, búsqueda de productos, adaptador Anthropic, control de costos, importador XLSX | Implementada y probada con proveedor simulado. **Sin llamadas reales.** |
 | 4 | Worker y cola persistente, outbox de respuestas, reservas presupuestarias, transferencias y retención segura | Implementada y probada contra PostgreSQL local. Sin envío. Detalle en [docs/worker.md](docs/worker.md). |
-| 5 | Integración real con Meta (OAuth, número autorizado, adaptador de envío, notificación a asesores) | Pendiente. **Requiere autorización explícita.** |
-| 6 | Despliegue en Render, proyecto Supabase real, observabilidad externa | Pendiente. **Requiere autorización explícita.** |
+| 5 | Adaptador WhatsApp Cloud API, dispatcher de salidas, estados de entrega y ventana de 24 h | Implementada y probada con transporte simulado. **Envío real desactivado.** Ver [whatsapp-integration.md](docs/whatsapp-integration.md). |
+| 6 | Despliegue en Render, proyecto Supabase real, piloto controlado | Preparado (`render.yaml`, guías). **Sin desplegar. Requiere autorización explícita.** Ver [go-live-checklist.md](docs/go-live-checklist.md). |
 
 ## Worker y procesamiento confiable (Fase 4)
 
@@ -23,7 +23,7 @@ Detalle completo en [docs/worker.md](docs/worker.md) y la decisión de cola en [
 
 - **Cola:** `webhook_events` en PostgreSQL con `SELECT ... FOR UPDATE SKIP LOCKED`, leases con token de propiedad y recuperación de leases vencidos.
 - **Orden:** un solo evento activo por contacto y línea de negocio, con `contact_leases`.
-- **Respuestas:** se guardan en `outbound_messages` como `pending`. Nada se envía en esta fase.
+- **Respuestas:** se guardan en `outbound_messages` y el dispatcher las envía solo con autorización explícita. Por defecto `WHATSAPP_DRY_RUN=true`: nada sale.
 - **Presupuesto:** cada llamada facturable tiene una reserva persistente. Un resultado incierto no se reintenta: pasa a revisión manual.
 - **Ejecución:** proceso independiente, desactivado por defecto.
 
@@ -144,7 +144,7 @@ Dependencias de ejecución: `fastapi 0.141.1`, `uvicorn 0.52.3`, `psycopg 3.3.6`
 .venv\Scripts\python.exe -m pytest -q tests --ignore=tests/integration
 ```
 
-→ 346 pasan (1 opcional omitido: catálogo real).
+→ 431 pasan (1 opcional omitido: catálogo real).
 
 **Integración** (PostgreSQL real, base desechable local):
 
@@ -156,7 +156,7 @@ $env:TEST_DATABASE_URL = "postgresql://postgres:<contraseña-local>@127.0.0.1:55
 .venv\Scripts\python.exe -m pytest -q tests/integration
 ```
 
-→ 61 pasan.
+→ 76 pasan.
 
 ### Guard de las pruebas destructivas
 
@@ -171,15 +171,23 @@ Las pruebas de integración reinician el esquema `public`. Por eso exigen **toda
 
 Si `TEST_DATABASE_URL` está definida pero es insegura, el módulo **falla**; no se omite. Las 29 pruebas del guard son unitarias y nunca se conectan a ninguna base.
 
-**Todas:** `python -m pytest -q` → 407 pasan con la base de pruebas (346 unitarias + 61 de integración) y 1 se omite (prueba opcional del catálogo real). Sin base de datos: 346 pasan y 4 se omiten, cada una con su motivo.
+**Todas:** `python -m pytest -q` → 507 pasan con la base de pruebas (431 unitarias + 76 de integración) y 1 se omite (prueba opcional del catálogo real). Sin base de datos: 346 pasan y 4 se omiten, cada una con su motivo.
 
 **Opcional:** `LACUSINE_CATALOG_XLSX=<ruta>` valida el catálogo real sin imprimir productos.
+
+## Integración WhatsApp y despliegue (Fase 5)
+
+- **Envío:** `WHATSAPP_DRY_RUN=true` y `META_SEND_ENABLED=false` por defecto. Con ambos desactivados no sale ninguna solicitud a Meta.
+- **Configuración local:** copie `.env.example` a `.env` y active `LACUSINE_LOAD_DOTENV=true` solo en su máquina. Render no usa `.env`.
+- **Despliegue:** `render.yaml` describe el Web Service y el Background Worker. Auto-deploy desactivado. Ver [render-deployment.md](docs/render-deployment.md).
+- **Base de datos:** nueve migraciones en orden, sin aplicar a Supabase Cloud. Ver [supabase-deployment.md](docs/supabase-deployment.md).
+- **Variables:** ver [environment-variables.md](docs/environment-variables.md).
+- **Puerta de salida:** ver [go-live-checklist.md](docs/go-live-checklist.md). Ninguna casilla de producción está marcada.
 
 ## Pendiente (no implementado, sin autorización)
 
 - **Aplicar migraciones a Supabase real** (incluidas las de la fase 4): requiere autorización y un plan de cambio.
 - **Rol de base de datos del backend** con privilegios mínimos (fuera del repositorio).
-- **Envío por WhatsApp** de las respuestas `pending` y adaptador de envío (Fase 5).
 - **Notificación a asesores** (correo, WhatsApp o Teams): hoy solo se registra la solicitud (Fase 5).
 - **Conciliación de reservas** `reserved` y `uncertain` y herramienta de revisión de `manual_review` (Fase 5).
 - **Importar el catálogo a Supabase**: requiere la aprobación de LCA.

@@ -39,6 +39,11 @@ def _float(name: str, default: float) -> float:
         raise ValueError(f"{name} debe ser numérico") from None
 
 
+def _csv(name: str) -> tuple[str, ...]:
+    raw = os.environ.get(name) or ""
+    return tuple(item.strip() for item in raw.split(",") if item.strip())
+
+
 def _decimal(name: str) -> Decimal | None:
     raw = os.environ.get(name)
     if raw is None or raw.strip() == "":
@@ -60,6 +65,16 @@ class Settings:
     max_body_bytes: int = 256 * 1024
     max_messages_per_request: int = 100
     webhook_event_retention_days: int = 7
+
+    # WhatsApp Cloud API (salida). Envío real deshabilitado por defecto.
+    meta_access_token: str | None = field(default=None, repr=False)
+    meta_phone_number_id: str | None = None
+    meta_graph_api_version: str | None = None
+    meta_send_enabled: bool = False
+    whatsapp_dry_run: bool = True
+    whatsapp_allowed_recipients: tuple[str, ...] = ()
+    whatsapp_timeout_seconds: float = 10.0
+    whatsapp_max_concurrency: int = 2
 
     # Agente y Claude. Por defecto todo deshabilitado.
     anthropic_enabled: bool = False
@@ -95,6 +110,14 @@ class Settings:
             database_url=os.environ.get("DATABASE_URL") or None,
             max_body_bytes=_int("MAX_WEBHOOK_BODY_BYTES", 256 * 1024),
             webhook_event_retention_days=_int("WEBHOOK_EVENT_RETENTION_DAYS", 7),
+            meta_access_token=os.environ.get("META_ACCESS_TOKEN") or None,
+            meta_phone_number_id=os.environ.get("META_PHONE_NUMBER_ID") or None,
+            meta_graph_api_version=os.environ.get("META_GRAPH_API_VERSION") or None,
+            meta_send_enabled=_bool("META_SEND_ENABLED", False),
+            whatsapp_dry_run=_bool("WHATSAPP_DRY_RUN", True),
+            whatsapp_allowed_recipients=_csv("WHATSAPP_ALLOWED_RECIPIENTS"),
+            whatsapp_timeout_seconds=_float("WHATSAPP_TIMEOUT_SECONDS", 10.0),
+            whatsapp_max_concurrency=_int("WHATSAPP_MAX_CONCURRENCY", 2),
             anthropic_enabled=_bool("ANTHROPIC_ENABLED", False),
             agent_dry_run=_bool("AGENT_DRY_RUN", True),
             anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY") or None,

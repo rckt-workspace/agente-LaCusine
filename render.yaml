@@ -1,0 +1,71 @@
+# Blueprint de Render. NO CREA SERVICIOS POR SÍ MISMO: se usa al crear el Blueprint desde el panel
+# de Render, con autorización expresa del equipo. Ver docs/render-deployment.md.
+#
+# Reglas de este archivo:
+#   * Ningún valor secreto aparece aquí. Los secretos se marcan con `sync: false` y se introducen en el panel.
+#   * Los despliegues automáticos están desactivados (autoDeployTrigger: off).
+#   * El envío real de WhatsApp y las llamadas a Claude arrancan DESACTIVADOS.
+#   * El Web Service recibe webhooks HTTP. El Background Worker procesa la cola y despacha las respuestas.
+#     No son el mismo proceso: el worker nunca se ejecuta dentro de FastAPI.
+
+services:
+  - type: web
+    name: lacusine-api
+    runtime: python
+    plan: starter  # validar plan y costo antes de crear; el plan gratuito suspende el servicio por inactividad
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health  # liveness; /ready depende de la base y se usa para monitoreo
+    autoDeployTrigger: off
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: META_APP_SECRET
+        sync: false
+      - key: META_VERIFY_TOKEN
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: META_GRAPH_API_VERSION
+        value: v26.0
+      - key: META_SEND_ENABLED
+        value: "false"
+      - key: WHATSAPP_DRY_RUN
+        value: "true"
+      - key: ANTHROPIC_ENABLED
+        value: "false"
+      - key: AGENT_DRY_RUN
+        value: "true"
+
+  - type: worker
+    name: lacusine-worker
+    runtime: python
+    plan: starter  # validar plan y costo antes de crear
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m app.worker.main
+    autoDeployTrigger: off
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: WORKER_ENABLED
+        value: "false"  # activar solo tras la lista de verificación de salida a producción
+      - key: DATABASE_URL
+        sync: false
+      - key: META_ACCESS_TOKEN
+        sync: false
+      - key: META_PHONE_NUMBER_ID
+        sync: false
+      - key: META_GRAPH_API_VERSION
+        value: v26.0
+      - key: META_SEND_ENABLED
+        value: "false"
+      - key: WHATSAPP_DRY_RUN
+        value: "true"
+      - key: WHATSAPP_ALLOWED_RECIPIENTS
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: ANTHROPIC_ENABLED
+        value: "false"
+      - key: AGENT_DRY_RUN
+        value: "true"

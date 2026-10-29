@@ -4,3 +4,4 @@ psycopg[binary]==3.3.6
 psycopg-pool==3.3.3
 anthropic==2.3.0
 openpyxl==3.1.5
+httpx==0.28.1

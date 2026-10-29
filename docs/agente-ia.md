@@ -1,6 +1,6 @@
 # Motor comercial de IA — Fase 3
 
-Estado: implementado y probado con proveedor simulado y PostgreSQL local. **No conectado a WhatsApp, no llama a Claude, no envía mensajes.**
+Estado: implementado y probado con proveedor simulado y PostgreSQL local. **El envío a WhatsApp está implementado y desactivado por defecto; no llama a Claude en producción.**
 
 ## Flujo de una conversación
 
@@ -116,7 +116,7 @@ Fuente: documentación oficial de Anthropic (`platform.claude.com/docs/en/about-
 5. **Vocabulario de búsqueda en memoria por proceso.** Un catálogo nuevo requiere reiniciar el proceso para que las erratas se corrijan contra el vocabulario actualizado.
 6. **Extracción del PDF.** La última respuesta de FAQ (cafetera Jura) aparece truncada en el texto extraído; conviene revisarla en el documento original.
 7. **Búsqueda sin índice trigram.** Con 349 filas el `strpos` sobre `search_text` es suficiente; con catálogos mucho mayores hará falta un índice `pg_trgm`.
-8. **No hay envío a WhatsApp.** El resultado es un objeto y la respuesta queda en outbox como `pending`. El envío es la Fase 5.
+8. **Envío a WhatsApp desactivado.** El resultado es un objeto y la respuesta queda en outbox. El envío requiere autorización explícita (ver [go-live-checklist.md](go-live-checklist.md)).
 
 ## Pruebas
 
@@ -124,7 +124,7 @@ Fuente: documentación oficial de Anthropic (`platform.claude.com/docs/en/about-
 - Integración (PostgreSQL local protegido): importación repetible, búsqueda sobre la base, costos concurrentes, contexto por conversación, escalamiento persistido y dos flujos extremo a extremo.
 - Opcional: `LACUSINE_CATALOG_XLSX=<ruta>` valida el archivo real sin imprimir productos.
 
-## Requisitos para la integración con WhatsApp (Fase 5)
+## Requisitos antes de activar el envío (Fase 5)
 
 1. **Adaptador de envío.** Debe leer `outbound_messages` en `pending`, marcar `sending` antes de llamar a Meta y guardar el identificador externo. Un envío con resultado incierto no se repite automáticamente.
 2. **Conciliación de reservas.** Antes de activar el envío automático, definir cómo se resuelven las reservas `reserved` y `uncertain` (herramienta de revisión o procedimiento manual).

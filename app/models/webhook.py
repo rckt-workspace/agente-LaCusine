@@ -66,6 +66,62 @@ def extract_inbound_messages(payload: Any, max_messages: int) -> list[InboundMes
     return messages
 
 
+@dataclass(frozen=True)
+class StatusEvent:
+    """Estado de un mensaje saliente (value.statuses[]). Los campos desconocidos de Meta se ignoran."""
+
+    message_id: str
+    status: str
+    recipient_id: str | None
+    error_code: str | None
+    business_phone_id: str
+    raw: dict[str, Any]
+
+    @property
+    def external_event_id(self) -> str:
+        return f"status:{self.message_id}:{self.status}"
+
+    @property
+    def payload_sha256(self) -> str:
+        canonical = json.dumps(self.raw, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def extract_statuses(payload: Any, max_items: int) -> list[StatusEvent]:
+    """Recorre entry[].changes[].value.statuses[]. No convierte estados en mensajes entrantes."""
+    if not isinstance(payload, dict):
+        return []
+    events: list[StatusEvent] = []
+    for entry in _as_list(payload, "entry"):
+        for change in _as_list(entry, "changes"):
+            value = _as_dict(change, "value")
+            business_phone_id = _business_phone_id(value)
+            for raw in _as_list(value, "statuses"):
+                if not isinstance(raw, dict):
+                    raise PayloadValidationError("status_not_object")
+                message_id = raw.get("id")
+                status = raw.get("status")
+                if not isinstance(message_id, str) or not 0 < len(message_id) <= 100:
+                    raise PayloadValidationError("status_id_invalid")
+                if not isinstance(status, str) or not 0 < len(status) <= 20:
+                    raise PayloadValidationError("status_value_invalid")
+                recipient = raw.get("recipient_id")
+                if recipient is not None and (not isinstance(recipient, str) or not WA_ID_PATTERN.match(recipient)):
+                    recipient = None
+                error_code = _first_error_code(raw.get("errors"))
+                events.append(StatusEvent(message_id, status, recipient, error_code, business_phone_id, raw))
+                if len(events) > max_items:
+                    raise PayloadValidationError("too_many_statuses")
+    return events
+
+
+def _first_error_code(errors: Any) -> str | None:
+    if not isinstance(errors, list) or not errors or not isinstance(errors[0], dict):
+        return None
+    code = errors[0].get("code")
+    return str(code)[:32] if code is not None else None
+
+
 def _business_phone_id(value: dict[str, Any]) -> str:
     metadata = value.get("metadata")
     if not isinstance(metadata, dict):

@@ -30,7 +30,7 @@ _CONTACT_KEY = "e.business_phone_id || ':' || coalesce(e.contact_wa_id, 'event:'
 
 _CANDIDATES_SQL = f"""
     select e.id, e.external_event_id, e.contact_wa_id, e.business_phone_id, e.payload, e.attempts,
-           e.received_at, {_CONTACT_KEY} as contact_key
+           e.received_at, {_CONTACT_KEY} as contact_key, e.event_type
     from public.webhook_events e
     where e.processing_status in ('received', 'queued', 'retry')
       and e.next_attempt_at <= now()
@@ -81,6 +81,7 @@ class Claim:
     attempts: int
     payload: dict[str, Any]
     received_at: datetime
+    event_type: str = "message"
 
 
 class JobRepository:
@@ -105,7 +106,7 @@ class JobRepository:
                 with conn.transaction():
                     candidates = conn.execute(_CANDIDATES_SQL, {"limit": limit}).fetchall()
                     for row in candidates:
-                        event_id, external_id, contact, phone, payload, attempts, received_at, key = row
+                        event_id, external_id, contact, phone, payload, attempts, received_at, key, event_type = row
                         token = token_factory()
                         lease = conn.execute(
                             _ACQUIRE_CONTACT_SQL,
@@ -124,6 +125,7 @@ class JobRepository:
                             event_id=event_id, external_event_id=external_id, contact_wa_id=contact,
                             business_phone_id=phone, contact_key=key, lease_token=token,
                             attempts=attempts + 1, payload=payload or {}, received_at=received_at,
+                            event_type=event_type,
                         ))
         except (psycopg.Error, PoolClosed):
             raise StorageError("job_claim_failed") from None

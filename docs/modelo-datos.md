@@ -12,6 +12,7 @@ Migraciones versionadas en `supabase/migrations/`, aplicadas en orden:
 | `20261028100200_handoff_reason_return.sql` | Motivo `return_request` en `human_handoffs` |
 | `20261029100000_worker_queue.sql` | Cola del worker (leases, estados), `contact_leases`, `outbound_messages`, `budget_reservations` |
 | `20261029100100_retention_worker_safe.sql` | Retención que solo elimina estados finales y respuestas cerradas |
+| `20261030100000_whatsapp_delivery.sql` | Estados reales de entrega, lease de envío, fechas de transición y eventos de estado de Meta |
 
 ## Entidad-relación
 
@@ -67,7 +68,7 @@ Restricción: `status = 'closed'` si y solo si `closed_at` tiene valor. Índice 
 
 **contact_leases** — exclusión por contacto. Clave primaria `contact_key` = línea de negocio + `wa_id`. Una sola fila activa; expira si el worker desaparece.
 
-**outbound_messages** — respuestas generadas. `idempotency_key` única, `webhook_event_id` única por evento, `delivery_status` (`pending`, `sending`, `sent`, `delivered`, `failed`, `cancelled`). Solo la fase 4 escribe `pending`.
+**outbound_messages** — respuestas. `idempotency_key` única, `webhook_event_id` única por evento y `external_message_id` (wamid de Meta) única cuando existe. Estados: `pending` (generada), `sending` (reclamada con lease), `sent` (Meta aceptó), `delivered`, `read`, `failed`, `uncertain` (resultado incierto: nunca se reenvía sola), `blocked` (ventana cerrada) y `cancelled` (control humano). Restricción: `sending` tiene `lease_token`. Incluye `next_attempt_at`, `last_error_code` (solo código), `from_phone_id` y las marcas `sent_at`, `delivered_at`, `read_at`, `failed_at`.
 
 **budget_reservations** — reserva por llamada facturable. `call_id` único. Estados `reserved`, `settled`, `released`, `uncertain`; `counted_usd` es lo que cuenta contra el presupuesto. Restricción: `released` implica `counted_usd = 0`.
 
@@ -115,5 +116,5 @@ Recomendaciones operativas:
 
 - Aplicar las migraciones en el proyecto Supabase real: **requiere autorización explícita**. Hasta entonces, solo se han aplicado en PostgreSQL local de pruebas.
 - Crear el rol de base de datos del backend y su política de contraseñas (fuera del repositorio).
-- Integración con WhatsApp para el envío de las respuestas `pending` (Fase 5).
+- Envío de las respuestas `pending` por WhatsApp Cloud API: implementado, desactivado por defecto (Fase 5). Ver [whatsapp-integration.md](whatsapp-integration.md).
 - Importar el catálogo real cuando LCA entregue la fuente aprobada; el importador ya valida el contrato y no inventa registros.
