@@ -2,7 +2,7 @@
 
 Agente comercial de WhatsApp para La Cuisine Appliances Colombia (WhatsApp Cloud API + Claude API + FastAPI + Supabase).
 
-> **Estado: Fases 1, 2 y 3 implementadas en el repositorio.** El webhook persiste eventos de forma idempotente, el motor comercial de IA está completo y probado con un proveedor simulado, y el catálogo se valida localmente. **No hay conexión a WhatsApp, no se llama a Claude, no se aplican migraciones en Supabase real y no hay envíos.**
+> **Estado: Fases 1 a 4 implementadas en el repositorio.** El webhook persiste eventos de forma idempotente; el worker procesa la cola con leases, orden por contacto, reintentos y presupuesto con reservas; el motor comercial de IA se prueba con un proveedor simulado. **No hay conexión a WhatsApp, no se llama a Claude, no se aplican migraciones en Supabase real, no hay despliegues y no hay envíos.**
 
 Documentación: [`docs/arquitectura.html`](docs/arquitectura.html) · [`docs/modelo-datos.md`](docs/modelo-datos.md) · [`docs/agente-ia.md`](docs/agente-ia.md)
 
@@ -13,8 +13,24 @@ Documentación: [`docs/arquitectura.html`](docs/arquitectura.html) · [`docs/mod
 | 1 | Webhook con handshake, firma `X-Hub-Signature-256`, límites de tamaño y falla cerrada | Completada |
 | 2 | Migraciones Supabase, RLS, repositorios, deduplicación persistente, importador CSV | Implementada y probada en PostgreSQL local. **Sin aplicar a Supabase real.** |
 | 3 | Motor comercial de IA, búsqueda de productos, adaptador Anthropic, control de costos, importador XLSX | Implementada y probada con proveedor simulado. **Sin llamadas reales.** |
-| 4 | Integración real con Meta (OAuth, número autorizado, envíos) | Pendiente. **Requiere autorización explícita.** |
-| 5 | Worker, cola persistente, reintentos, notificación a asesores, auditoría diferida | Pendiente |
+| 4 | Worker y cola persistente, outbox de respuestas, reservas presupuestarias, transferencias y retención segura | Implementada y probada contra PostgreSQL local. Sin envío. Detalle en [docs/worker.md](docs/worker.md). |
+| 5 | Integración real con Meta (OAuth, número autorizado, adaptador de envío, notificación a asesores) | Pendiente. **Requiere autorización explícita.** |
+| 6 | Despliegue en Render, proyecto Supabase real, observabilidad externa | Pendiente. **Requiere autorización explícita.** |
+
+## Worker y procesamiento confiable (Fase 4)
+
+Detalle completo en [docs/worker.md](docs/worker.md) y la decisión de cola en [docs/adr/0001-postgresql-as-job-queue.md](docs/adr/0001-postgresql-as-job-queue.md).
+
+- **Cola:** `webhook_events` en PostgreSQL con `SELECT ... FOR UPDATE SKIP LOCKED`, leases con token de propiedad y recuperación de leases vencidos.
+- **Orden:** un solo evento activo por contacto y línea de negocio, con `contact_leases`.
+- **Respuestas:** se guardan en `outbound_messages` como `pending`. Nada se envía en esta fase.
+- **Presupuesto:** cada llamada facturable tiene una reserva persistente. Un resultado incierto no se reintenta: pasa a revisión manual.
+- **Ejecución:** proceso independiente, desactivado por defecto.
+
+```powershell
+$env:WORKER_ENABLED = "true"
+.venv\Scripts\python.exe -m app.worker.main
+```
 
 ## Motor de IA (Fase 3)
 
@@ -71,20 +87,23 @@ app/
     anthropic_client.py        # SDK oficial; reintentos y concurrencia acotados
   services/
     product_search.py          # búsqueda con corrección de erratas
-    cost_tracker.py            # costos, presupuestos y precheck
+    cost_tracker.py            # costos, reservas y auditoría
+    budget_ledger.py           # máquina de estados de reservas (memoria y PostgreSQL)
     catalog_xlsx.py            # importador XLSX (dry-run por defecto)
     catalog_import.py          # importador CSV (Fase 2)
     text.py                    # normalización para búsqueda
-  repositories/                # PostgreSQL: webhook_events, catalog, products, crm, llm_usage
+  repositories/                # PostgreSQL: webhook_events, jobs, outbox, catalog, products, crm, llm_usage
+  worker/                      # proceso independiente: config, runner, processor, retry, bootstrap, main
   core/config.py               # configuración desde variables de entorno
   core/logging_utils.py        # logging seguro
   db/pool.py                   # pool psycopg
   models/webhook.py            # validación del payload
   security/signature.py        # HMAC-SHA256 en tiempo constante
 supabase/migrations/           # esquema, RLS, retención, catálogo, costos, handoff (versionadas)
-docs/                          # arquitectura.html, modelo-datos.md, agente-ia.md
+docs/                          # arquitectura.html, modelo-datos.md, agente-ia.md, worker.md, adr/
 tests/                         # unitarias (dobles en memoria, red bloqueada)
 tests/integration/             # PostgreSQL real, con guard de seguridad
+# tests/worker/ incluye la lógica del runner y del procesador (sin base de datos)
 ```
 
 ## Configuración
@@ -125,7 +144,7 @@ Dependencias de ejecución: `fastapi 0.141.1`, `uvicorn 0.52.3`, `psycopg 3.3.6`
 .venv\Scripts\python.exe -m pytest -q tests --ignore=tests/integration
 ```
 
-→ 271 pasan.
+→ 346 pasan (1 opcional omitido: catálogo real).
 
 **Integración** (PostgreSQL real, base desechable local):
 
@@ -137,7 +156,7 @@ $env:TEST_DATABASE_URL = "postgresql://postgres:<contraseña-local>@127.0.0.1:55
 .venv\Scripts\python.exe -m pytest -q tests/integration
 ```
 
-→ 41 pasan.
+→ 61 pasan.
 
 ### Guard de las pruebas destructivas
 
@@ -152,17 +171,19 @@ Las pruebas de integración reinician el esquema `public`. Por eso exigen **toda
 
 Si `TEST_DATABASE_URL` está definida pero es insegura, el módulo **falla**; no se omite. Las 29 pruebas del guard son unitarias y nunca se conectan a ninguna base.
 
-**Todas:** `python -m pytest -q` → 312 pasan con la base de pruebas (271 unitarias + 41 de integración) y 1 se omite (prueba opcional del catálogo real). Sin base de datos: 271 pasan y 3 se omiten, cada una con su motivo.
+**Todas:** `python -m pytest -q` → 407 pasan con la base de pruebas (346 unitarias + 61 de integración) y 1 se omite (prueba opcional del catálogo real). Sin base de datos: 346 pasan y 4 se omiten, cada una con su motivo.
 
 **Opcional:** `LACUSINE_CATALOG_XLSX=<ruta>` valida el catálogo real sin imprimir productos.
 
 ## Pendiente (no implementado, sin autorización)
 
-- **Aplicar migraciones a Supabase real**: requiere autorización y un plan de cambio.
+- **Aplicar migraciones a Supabase real** (incluidas las de la fase 4): requiere autorización y un plan de cambio.
 - **Rol de base de datos del backend** con privilegios mínimos (fuera del repositorio).
-- **Envío por WhatsApp** y conexión del agente al flujo real (Fase 4).
-- **Worker y cola**, notificación a asesores y auditoría diferida (Fase 5).
+- **Envío por WhatsApp** de las respuestas `pending` y adaptador de envío (Fase 5).
+- **Notificación a asesores** (correo, WhatsApp o Teams): hoy solo se registra la solicitud (Fase 5).
+- **Conciliación de reservas** `reserved` y `uncertain` y herramienta de revisión de `manual_review` (Fase 5).
 - **Importar el catálogo a Supabase**: requiere la aprobación de LCA.
+- **Despliegue en Render** (API y worker como servicios separados): requiere autorización.
 - **Validación legal** de las políticas marcadas como pendientes (garantías de accesorios, devoluciones en promoción, 25 % de gasto administrativo).
 - **Precios de Meta, Anthropic y Supabase**: verificar antes de presupuestar. Las tarifas de Anthropic usadas como referencia se verificaron el 28/10/2026 y no están en el código.
 

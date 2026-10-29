@@ -5,7 +5,8 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
+from fastapi.responses import JSONResponse
 
 from app.api.webhook import router as webhook_router
 from app.core.config import Settings
@@ -54,7 +55,20 @@ def create_app(
 
     @app.get("/health", tags=["ops"])
     def health() -> dict[str, str]:
+        # Liveness: el proceso responde. No comprueba dependencias.
         return {"status": "ok"}
+
+    @app.get("/ready", tags=["ops"])
+    def ready() -> Response:
+        # Readiness: la dependencia crítica (PostgreSQL) responde. Sin detalles de error.
+        if pool is None:
+            return JSONResponse({"status": "not_configured"}, status_code=503)
+        try:
+            with pool.connection() as conn:
+                conn.execute("select 1")
+        except Exception:  # noqa: BLE001 - nunca se expone el detalle del fallo
+            return JSONResponse({"status": "unavailable"}, status_code=503)
+        return JSONResponse({"status": "ready"})
 
     return app
 

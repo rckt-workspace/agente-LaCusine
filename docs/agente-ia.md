@@ -14,7 +14,7 @@ evento de WhatsApp (ya persistido en webhook_events)
        5. Solicitud explícita de asesor → escalamiento determinista                (sin llamada)
        6. Búsqueda acotada (≤5 productos) + presupuesto del cliente
           + contexto de esta conversación (≤8 mensajes, ≤3000 caracteres)
-       7. Precheck de presupuesto (diario, mensual, por interacción)
+       7. Reserva persistente del peor caso (diario, mensual, por interacción)
        8. Llamada al proveedor (FakeLLMProvider o AnthropicAgentClient)
        9. Registro de costo idempotente (solo éxitos)
       10. Validación: esquema Pydantic → productos (solo candidatos reales) → promesas prohibidas
@@ -37,7 +37,8 @@ evento de WhatsApp (ya persistido en webhook_events)
 | `app/integrations/llm.py` | Interfaz `LLMProvider`, errores tipados y `FakeLLMProvider` |
 | `app/integrations/anthropic_client.py` | Adaptador del SDK oficial (único módulo que lo importa) |
 | `app/services/product_search.py` | Búsqueda por nombre, marca, referencia, categoría, presupuesto; corrección de erratas |
-| `app/services/cost_tracker.py` | Estimación de costo, presupuestos, límites, precheck |
+| `app/services/cost_tracker.py` | Estimación de costo, reservas, liquidación y auditoría |
+| `app/services/budget_ledger.py` | Libro de reservas: máquina de estados y versión PostgreSQL |
 | `app/services/catalog_xlsx.py` | Importador XLSX con validación y resumen |
 | `app/repositories/products.py`, `llm_usage.py`, `crm.py` | Persistencia (consultas parametrizadas, límites) |
 
@@ -99,7 +100,8 @@ Fuente: documentación oficial de Anthropic (`platform.claude.com/docs/en/about-
 ## Costos
 
 - **Estimación, no factura:** el costo se calcula con las tarifas configuradas. Las facturas oficiales de Anthropic pueden diferir.
-- **Precheck:** antes de cada llamada se calcula el peor caso (entrada estimada + máximo de salida). Se bloquea si excede el límite por interacción, el diario o el mensual. El día y el mes siguen la hora de Colombia (UTC−5 fijo).
+- **Reserva:** antes de cada llamada se reserva el peor caso (entrada estimada + máximo de salida) en PostgreSQL, bajo un bloqueo de transacción que dura solo la reserva. Se rechaza si excede el límite por interacción, el diario o el mensual. El día y el mes siguen la hora de Colombia (UTC−5 fijo).
+- **Liquidación:** la reserva pasa a `settled` con el costo real, `released` si la API garantizó que no facturó, o `uncertain` si no se sabe. Un `uncertain` no se libera automáticamente. Detalle en [docs/worker.md](worker.md).
 - **Idempotencia:** el éxito se registra una sola vez por `call_id` (índice parcial). Un reintento del mismo evento no vuelve a sumar costo. Los fallos se auditan sin costo.
 - **Proveedor simulado:** nunca registra costo, aunque haya tarifas configuradas.
 - **Caché de prompts:** desactivada (`ANTHROPIC_PROMPT_CACHING=false`). La escritura cuesta 1.25× la entrada y la lectura 0.1×, así que solo compensa si el mismo prefijo se reutiliza muchas veces dentro del tiempo de vida de la caché. Antes de activarla: medir la tasa real de aciertos y verificar en la documentación el mínimo de tokens cacheables, que no se ha confirmado en esta fase.
@@ -107,14 +109,14 @@ Fuente: documentación oficial de Anthropic (`platform.claude.com/docs/en/about-
 
 ## Riesgos y límites conocidos
 
-1. **Presupuesto no atómico entre procesos.** El precheck y el registro no son una transacción; dos procesos simultáneos pueden superar el límite por poco. Mitigación: un solo worker en la Fase 5, o un contador atómico en la base.
-2. **Fallo de auditoría tras una llamada exitosa.** Si la base falla al registrar el costo, la excepción se propaga y el reintento puede volver a llamar al modelo (y facturar). Se prefiere no ocultar el fallo. Debe resolverse con cola y reintento de la auditoría en la Fase 5.
-3. **Reintentos del adaptador.** Solo se reintentan 429 y 5xx/529, porque la API no factura la generación rechazada. Los timeouts no se reintentan porque pueden haberse facturado.
+1. **Presupuesto.** Resuelto en la fase 4 con reservas persistentes y bloqueo de transacción. Quedan las limitaciones de [docs/worker.md](worker.md): una reserva `reserved` tras un fallo debe conciliarse a mano.
+2. **Auditoría tras una llamada exitosa.** Si falla el registro, la reserva queda `reserved` y el caso pasa a revisión. No se repite la llamada, pero la conciliación es manual.
+3. **Reintentos del adaptador.** Solo se reintentan 429 y 5xx/529, porque la API no factura la generación rechazada. Los timeouts no se reintentan.
 4. **Validación jurídica pendiente.** Las políticas marcadas no deben usarse como afirmaciones absolutas hasta que LCI las valide.
 5. **Vocabulario de búsqueda en memoria por proceso.** Un catálogo nuevo requiere reiniciar el proceso para que las erratas se corrijan contra el vocabulario actualizado.
 6. **Extracción del PDF.** La última respuesta de FAQ (cafetera Jura) aparece truncada en el texto extraído; conviene revisarla en el documento original.
 7. **Búsqueda sin índice trigram.** Con 349 filas el `strpos` sobre `search_text` es suficiente; con catálogos mucho mayores hará falta un índice `pg_trgm`.
-8. **No hay envío a WhatsApp.** El resultado es un objeto; el envío, la persistencia de la respuesta y la cola son de la Fase 4-5.
+8. **No hay envío a WhatsApp.** El resultado es un objeto y la respuesta queda en outbox como `pending`. El envío es la Fase 5.
 
 ## Pruebas
 
@@ -122,14 +124,12 @@ Fuente: documentación oficial de Anthropic (`platform.claude.com/docs/en/about-
 - Integración (PostgreSQL local protegido): importación repetible, búsqueda sobre la base, costos concurrentes, contexto por conversación, escalamiento persistido y dos flujos extremo a extremo.
 - Opcional: `LACUSINE_CATALOG_XLSX=<ruta>` valida el archivo real sin imprimir productos.
 
-## Requisitos para las fases siguientes
+## Requisitos para la integración con WhatsApp (Fase 5)
 
-Estos riesgos son conocidos y no se resuelven en esta fase. Son condiciones para producción:
-
-1. **Worker y cola persistente (Fase 5).** Un único consumidor por conversación, o un contador atómico en PostgreSQL para el presupuesto. El precheck actual no es atómico entre procesos.
-2. **Auditoría diferida.** Si la base falla después de una llamada exitosa, el costo debe quedar en cola y registrarse al recuperarse. Hoy la excepción se propaga y un reintento puede volver a facturar.
-3. **Catálogo en memoria.** El vocabulario de corrección de erratas se carga una vez por proceso. Tras una reimportación hay que reiniciar el proceso o invalidar la caché.
-4. **Políticas pendientes.** Las afirmaciones marcadas como pendientes de validación legal no deben aparecer como absolutas. La protección actual es heurística (patrones de texto) y no sustituye la revisión humana ni la validación jurídica.
-5. **Prompt injection.** Las defensas son de dos capas (detección de entrada y validación de salida) y reducen el riesgo, pero no lo eliminan. Ninguna respuesta del modelo se envía sin validar.
-6. **Envío real.** El resultado del agente no es un envío. La Fase 4 debe conservar el control humano y el apagado de emergencia antes de conectar WhatsApp.
+1. **Adaptador de envío.** Debe leer `outbound_messages` en `pending`, marcar `sending` antes de llamar a Meta y guardar el identificador externo. Un envío con resultado incierto no se repite automáticamente.
+2. **Conciliación de reservas.** Antes de activar el envío automático, definir cómo se resuelven las reservas `reserved` y `uncertain` (herramienta de revisión o procedimiento manual).
+3. **Control humano y apagado.** Mantener `AGENT_KILL_SWITCH` y el bloqueo por conversación asignada a un asesor antes de conectar el número real.
+4. **Catálogo en memoria.** Tras reimportar el catálogo, reiniciar el worker.
+5. **Políticas pendientes.** Las afirmaciones pendientes de validación legal no deben aparecer como absolutas. La protección actual es heurística.
+6. **Prompt injection.** Las defensas de dos capas reducen el riesgo; no lo eliminan. Ninguna respuesta del modelo se envía sin validar.
 7. **Caché de prompts.** Desactivada. No activarla sin medir la reutilización real.

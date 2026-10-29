@@ -10,6 +10,8 @@ Migraciones versionadas en `supabase/migrations/`, aplicadas en orden:
 | `20261028100000_products_pricing_search.sql` | Precio anterior, ahorro, disponibilidad, nota de entrega, fecha de extracción y texto de búsqueda en `products` |
 | `20261028100100_llm_usage_events.sql` | Auditoría de costos de Claude (`llm_usage_events`) con RLS |
 | `20261028100200_handoff_reason_return.sql` | Motivo `return_request` en `human_handoffs` |
+| `20261029100000_worker_queue.sql` | Cola del worker (leases, estados), `contact_leases`, `outbound_messages`, `budget_reservations` |
+| `20261029100100_retention_worker_safe.sql` | Retención que solo elimina estados finales y respuestas cerradas |
 
 ## Entidad-relación
 
@@ -59,11 +61,21 @@ Restricción: `status = 'closed'` si y solo si `closed_at` tiene valor. Índice 
 **human_handoffs** — solicitudes de asesor. `reason` (enumerado: `purchase_intent`, `quote_request`, `installation`, `warranty`, `return_request`, `complaint`, `unsupported_request`, `customer_request`, `other`), `priority` (`low`, `normal`, `high`, `urgent`), `status` (`open`, `assigned`, `resolved`, `cancelled`), `assigned_advisor`, `opened_at`, `closed_at`.
 Índice único parcial: **una solicitud activa por conversación**. Estado `assigned` exige asesor asignado.
 
+## Cola y respuestas (Fase 4)
+
+**webhook_events (ampliada)** — `business_phone_id` (línea de WhatsApp de origen), `lease_token`, `lease_owner`, `lease_expires_at`, `last_attempt_at`. Estados: `received`, `queued`, `processing`, `processed`, `ignored`, `retry`, `manual_review`, `dead_letter`. Restricción: `processing` tiene `lease_token` y ningún otro estado lo tiene.
+
+**contact_leases** — exclusión por contacto. Clave primaria `contact_key` = línea de negocio + `wa_id`. Una sola fila activa; expira si el worker desaparece.
+
+**outbound_messages** — respuestas generadas. `idempotency_key` única, `webhook_event_id` única por evento, `delivery_status` (`pending`, `sending`, `sent`, `delivered`, `failed`, `cancelled`). Solo la fase 4 escribe `pending`.
+
+**budget_reservations** — reserva por llamada facturable. `call_id` único. Estados `reserved`, `settled`, `released`, `uncertain`; `counted_usd` es lo que cuenta contra el presupuesto. Restricción: `released` implica `counted_usd = 0`.
+
 ## Decisiones de diseño
 
 1. **Deduplicación en la base, no en memoria.** `INSERT … ON CONFLICT DO NOTHING` es atómico: sobrevive a reinicios, a varias instancias y a reintentos concurrentes. Las pruebas de integración verifican 20 inserciones simultáneas del mismo evento y exactamente una `NEW`.
 2. **Confirmar solo tras persistir.** El webhook responde 200 únicamente cuando todos los mensajes del payload están guardados. Ante un fallo responde 503 y Meta reintenta; el reintento no duplica porque la clave es única.
-3. **Recepción separada de procesamiento.** El webhook solo escribe `webhook_events`. Un worker (Fase 5) leerá los pendientes, procesará y marcará el estado. No hay llamadas a Claude en la ruta del webhook.
+3. **Recepción separada de procesamiento.** El webhook solo escribe `webhook_events`. El worker (Fase 4) reclama los pendientes con leases, procesa y finaliza con un token de propiedad. Ver [docs/worker.md](worker.md).
 4. **Estados controlados por CHECK.** Cambiar un estado exige una migración nueva; evita valores libres que rompan consultas.
 5. **Timestamps con zona horaria.** Todos los campos de fecha son `timestamptz`.
 6. **Sin secretos en tablas comerciales.** Ni tokens de Meta ni claves de Anthropic se guardan aquí; van en el entorno del servidor.
@@ -81,14 +93,14 @@ Restricción: `status = 'closed'` si y solo si `closed_at` tiene valor. Índice 
 
 | Dato | Plazo | Mecanismo |
 |---|---|---|
-| `webhook_events` (incluye el mensaje completo) | `WEBHOOK_EVENT_RETENTION_DAYS`, por defecto 7 días | `purge_expired_personal_data` elimina las filas vencidas |
+| `webhook_events` (incluye el mensaje completo) | `WEBHOOK_EVENT_RETENTION_DAYS`, por defecto 7 días | `purge_expired_personal_data` elimina las filas vencidas **solo si están en estado final** (`processed`, `ignored`, `dead_letter`); nunca pendientes, en proceso ni en revisión |
 | `messages.content_text` | Según `content_expires_at` | La función anula el contenido; el metadato del mensaje se conserva |
 | Prospecto (solicitud de eliminación) | Inmediato | `DELETE FROM leads`; cascada a conversaciones, mensajes y solicitudes |
 | Eventos asociados al prospecto | Igual que `webhook_events` | `DELETE FROM webhook_events WHERE contact_wa_id = …` (no tienen clave foránea a propósito) |
 
 Recomendaciones operativas:
 - Programar la función de purga (cada hora o cada día) con una credencial de servidor, en lotes (`p_batch_size` entre 1 y 10000).
-- Registrar en el worker, al terminar el procesamiento, la anulación de `payload` en `webhook_events`; la retención ya lo garantiza, pero minimizar reduce el riesgo.
+- El worker elimina el `payload` al terminar un evento (`processed` o `ignored`); la retención garantiza la eliminación del resto.
 - Revisar el plazo de retención con el responsable legal de La Cuisine antes de producción.
 
 ## Crecimiento y costos
@@ -103,5 +115,5 @@ Recomendaciones operativas:
 
 - Aplicar las migraciones en el proyecto Supabase real: **requiere autorización explícita**. Hasta entonces, solo se han aplicado en PostgreSQL local de pruebas.
 - Crear el rol de base de datos del backend y su política de contraseñas (fuera del repositorio).
-- Worker y cola (Fase 5), que consumirán `webhook_events` pendientes.
+- Integración con WhatsApp para el envío de las respuestas `pending` (Fase 5).
 - Importar el catálogo real cuando LCA entregue la fuente aprobada; el importador ya valida el contrato y no inventa registros.

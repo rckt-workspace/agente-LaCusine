@@ -40,10 +40,16 @@ class LLMResponse:
 
 
 class LLMError(Exception):
-    """Error del proveedor. Solo expone un código; nunca el texto original, que puede contener datos."""
+    """Error del proveedor. Solo expone un código; nunca el texto original, que puede contener datos.
+
+    billed_state indica si la llamada pudo haberse facturado:
+      * "not_billed": la API garantiza que no generó cobro (rechazo previo a la generación).
+      * "uncertain": no se sabe (valor por defecto y el más conservador).
+    """
 
     code = "provider_error"
     retryable = False
+    billed_state = "uncertain"
 
     def __init__(self, code: str | None = None) -> None:
         super().__init__(code or self.code)
@@ -52,15 +58,18 @@ class LLMError(Exception):
 
 class LLMDisabledError(LLMError):
     code = "disabled"
+    billed_state = "not_billed"
 
 
 class LLMAuthError(LLMError):
     code = "auth_failed"
+    billed_state = "not_billed"
 
 
 class LLMRateLimitError(LLMError):
     code = "rate_limited"
     retryable = True
+    billed_state = "not_billed"
 
 
 class LLMUnavailableError(LLMError):
@@ -75,6 +84,7 @@ class LLMTimeoutError(LLMError):
 
 class LLMBusyError(LLMError):
     code = "busy"
+    billed_state = "not_billed"
 
 
 class LLMProvider(Protocol):

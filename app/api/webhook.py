@@ -75,6 +75,7 @@ async def receive_webhook(request: Request) -> Response:
             contact_wa_id=message.sender,
             payload=message.raw,
             payload_sha256=message.payload_sha256,
+            business_phone_id=message.business_phone_id,
         )
         try:
             outcome = repository.register(record)

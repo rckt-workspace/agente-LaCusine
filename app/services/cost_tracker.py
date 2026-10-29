@@ -1,8 +1,13 @@
-"""Control de costos de Claude: estimación, presupuestos, límites y registro idempotente.
+"""Costos de Claude: estimación, reservas presupuestarias y auditoría idempotente.
 
-Los costos son ESTIMACIONES calculadas con tarifas configuradas por el equipo. No son facturas de Anthropic.
-Sin tarifas configuradas no se permite ninguna llamada real (falla cerrado).
+Los costos son ESTIMACIONES calculadas con tarifas configuradas. No son facturas de Anthropic.
+Sin tarifas configuradas no se reserva ninguna llamada real (falla cerrado).
 Si la tarifa de caché no está configurada, se usa la tarifa de entrada: sobreestima, nunca subestima.
+
+Ciclo de una llamada facturable:
+  reserve -> complete -> record_success (auditoría) -> settle
+  reserve -> complete falla sin facturar -> release
+  reserve -> complete falla con resultado incierto -> mark_uncertain (no se reintenta solo)
 """
 
 from __future__ import annotations
@@ -15,19 +20,19 @@ from uuid import UUID
 
 from app.core.config import Settings
 from app.integrations.llm import LLMResponse, LLMUsage
+from app.services.budget_ledger import (
+    BudgetExceededError,
+    BudgetLedger,
+    BudgetLimits,
+    InMemoryBudgetLedger,
+)
+
+__all__ = ["BudgetExceededError", "CostTracker", "Pricing", "UsageEvent", "estimate_cost", "worst_case_cost"]
 
 MILLION = Decimal(1_000_000)
 MICRO = Decimal("0.000001")
 # Colombia no tiene horario de verano desde 1993: UTC-5 fijo.
 BOGOTA = timezone(timedelta(hours=-5))
-
-
-class BudgetExceededError(Exception):
-    """El presupuesto o el límite por interacción impiden la llamada. El código no incluye datos."""
-
-    def __init__(self, code: str) -> None:
-        super().__init__(code)
-        self.code = code
 
 
 @dataclass(frozen=True)
@@ -88,7 +93,6 @@ class UsageStore(Protocol):
     def record_success_once(self, event: UsageEvent) -> bool: ...
     def record_failure(self, event: UsageEvent) -> None: ...
     def has_success(self, call_id: str) -> bool: ...
-    def spent_between(self, start: datetime, end: datetime) -> Decimal: ...
 
 
 class CostTracker:
@@ -99,34 +103,39 @@ class CostTracker:
         daily_budget_usd: Decimal | None = None,
         monthly_budget_usd: Decimal | None = None,
         interaction_limit_usd: Decimal | None = None,
+        ledger: BudgetLedger | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
     ) -> None:
         self._store = store
         self._pricing = pricing
-        self._daily = daily_budget_usd
-        self._monthly = monthly_budget_usd
-        self._interaction = interaction_limit_usd
+        self._limits = BudgetLimits(
+            daily_usd=daily_budget_usd,
+            monthly_usd=monthly_budget_usd,
+            interaction_usd=interaction_limit_usd,
+        )
+        self._ledger: BudgetLedger = ledger if ledger is not None else InMemoryBudgetLedger()
         self._clock = clock
 
     @property
     def pricing(self) -> Pricing | None:
         return self._pricing
 
-    def precheck(self, worst_case_usd: Decimal) -> None:
-        """Rechaza preventivamente una llamada que podría exceder algún límite. Sin tarifas, siempre rechaza."""
+    @property
+    def ledger(self) -> BudgetLedger:
+        return self._ledger
+
+    def reserve(self, call_id: str, conversation_id: UUID | None, worst_case_usd: Decimal) -> None:
+        """Reserva el peor caso antes de llamar. Lanza BudgetExceededError si no cabe en algún límite."""
         if self._pricing is None:
             raise BudgetExceededError("pricing_not_configured")
-        if self._interaction is not None and worst_case_usd > self._interaction:
-            raise BudgetExceededError("interaction_limit")
         now = self._clock()
-        if self._daily is not None:
-            spent = self._store.spent_between(_day_start(now), now + timedelta(seconds=1))
-            if spent + worst_case_usd > self._daily:
-                raise BudgetExceededError("daily_budget")
-        if self._monthly is not None:
-            spent = self._store.spent_between(_month_start(now), now + timedelta(seconds=1))
-            if spent + worst_case_usd > self._monthly:
-                raise BudgetExceededError("monthly_budget")
+        self._ledger.reserve(
+            call_id, conversation_id, worst_case_usd, self._limits,
+            day_start=_day_start(now), month_start=_month_start(now), now=now,
+        )
+
+    def reservation_state(self, call_id: str) -> str | None:
+        return self._ledger.state(call_id)
 
     def record_success(self, call_id: str, conversation_id: UUID | None, response: LLMResponse) -> Decimal:
         billable = self._pricing is not None and response.provider != "fake"
@@ -142,9 +151,21 @@ class CostTracker:
             error_code=None,
             pricing_reference=self._pricing.reference if billable else None,
         )
-        # Idempotente: un reintento del mismo evento no vuelve a sumar el costo.
+        # Primero la auditoría: si falla, la reserva queda 'reserved' y se concilia sin volver a llamar.
         self._store.record_success_once(event)
+        if self._ledger.state(call_id) == "reserved":
+            self._ledger.settle(call_id, cost)
         return cost
+
+    def release_reservation(self, call_id: str) -> None:
+        """Solo para errores que la API garantiza como no facturados."""
+        if self._ledger.state(call_id) == "reserved":
+            self._ledger.release(call_id)
+
+    def mark_uncertain(self, call_id: str) -> None:
+        """Resultado incierto: el peor caso se mantiene contado hasta conciliar."""
+        if self._ledger.state(call_id) == "reserved":
+            self._ledger.mark_uncertain(call_id)
 
     def record_failure(self, call_id: str, conversation_id: UUID | None, provider: str, model: str, code: str) -> None:
         self._store.record_failure(

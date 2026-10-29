@@ -37,7 +37,10 @@ from app.services.catalog_import import import_catalog
 
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
 MIGRATIONS_DIR = Path(__file__).resolve().parents[2] / "supabase" / "migrations"
-RLS_TABLES = ("leads", "conversations", "messages", "webhook_events", "products", "human_handoffs", "llm_usage_events")
+RLS_TABLES = (
+    "leads", "conversations", "messages", "webhook_events", "products", "human_handoffs", "llm_usage_events",
+    "contact_leases", "outbound_messages", "budget_reservations",
+)
 HASH = "a" * 64
 
 pytestmark = pytest.mark.integration
@@ -263,9 +266,11 @@ def test_storage_failure_does_not_leak_connection_details():
 
 def test_purge_deletes_expired_events_and_clears_expired_message_content(pool):
     with psycopg.connect(TEST_DATABASE_URL, autocommit=True) as conn:
+        # Solo los estados finales son elegibles para purga; el pendiente debe sobrevivir.
         conn.execute(
-            "insert into public.webhook_events (external_event_id, payload_sha256, expires_at) "
-            "values ('wamid.OLD', %s, now() - interval '1 day'), ('wamid.NEW', %s, now() + interval '1 day')",
+            "insert into public.webhook_events (external_event_id, payload_sha256, expires_at, processing_status, processed_at) "
+            "values ('wamid.OLD', %s, now() - interval '1 day', 'processed', now()), "
+            "('wamid.NEW', %s, now() + interval '1 day', 'received', null)",
             (HASH, HASH),
         )
         lead_id = conn.execute(
@@ -279,11 +284,11 @@ def test_purge_deletes_expired_events_and_clears_expired_message_content(pool):
             "content_text, content_expires_at) values (%s, 'inbound', 'text', now(), 'vencido', now() - interval '1 hour')",
             (conv_id,),
         )
-        deleted, cleared = conn.execute("select * from public.purge_expired_personal_data(100)").fetchone()
+        deleted, cleared, outbound = conn.execute("select * from public.purge_expired_personal_data(100)").fetchone()
         remaining = conn.execute("select external_event_id from public.webhook_events").fetchall()
         content = conn.execute("select content_text from public.messages").fetchone()[0]
 
-    assert (deleted, cleared) == (1, 1)
+    assert (deleted, cleared, outbound) == (1, 1, 0)
     assert remaining == [("wamid.NEW",)]
     assert content is None
 

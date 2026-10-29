@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Any
 
 WA_ID_PATTERN = re.compile(r"^[0-9]{6,20}$")
+PHONE_ID_PATTERN = re.compile(r"^[0-9]{1,32}$")
 MESSAGE_ID_MAX_LENGTH = 128
 
 
@@ -21,6 +22,7 @@ class InboundMessage:
     message_id: str
     sender: str | None
     raw: dict[str, Any]
+    business_phone_id: str = ""
 
     @property
     def payload_sha256(self) -> str:
@@ -32,6 +34,7 @@ def extract_inbound_messages(payload: Any, max_messages: int) -> list[InboundMes
     """Recorre entry[].changes[].value.messages[] y valida solo lo necesario para persistir.
 
     Los estados de entrega (value.statuses) no son mensajes entrantes y se ignoran.
+    La línea de negocio (value.metadata.phone_number_id) identifica la conversación junto con el contacto.
     """
     if not isinstance(payload, dict):
         raise PayloadValidationError("payload_not_object")
@@ -45,6 +48,7 @@ def extract_inbound_messages(payload: Any, max_messages: int) -> list[InboundMes
         changes = _as_list(entry, "changes")
         for change in changes:
             value = _as_dict(change, "value")
+            business_phone_id = _business_phone_id(value)
             for raw in _as_list(value, "messages"):
                 if not isinstance(raw, dict):
                     raise PayloadValidationError("message_not_object")
@@ -54,10 +58,24 @@ def extract_inbound_messages(payload: Any, max_messages: int) -> list[InboundMes
                 sender = raw.get("from")
                 if sender is not None and (not isinstance(sender, str) or not WA_ID_PATTERN.match(sender)):
                     raise PayloadValidationError("sender_invalid")
-                messages.append(InboundMessage(message_id=message_id, sender=sender, raw=raw))
+                messages.append(
+                    InboundMessage(message_id=message_id, sender=sender, raw=raw, business_phone_id=business_phone_id)
+                )
                 if len(messages) > max_messages:
                     raise PayloadValidationError("too_many_messages")
     return messages
+
+
+def _business_phone_id(value: dict[str, Any]) -> str:
+    metadata = value.get("metadata")
+    if not isinstance(metadata, dict):
+        return ""
+    phone_id = metadata.get("phone_number_id", "")
+    if phone_id in (None, ""):
+        return ""
+    if not isinstance(phone_id, str) or not PHONE_ID_PATTERN.match(phone_id):
+        raise PayloadValidationError("phone_number_id_invalid")
+    return phone_id
 
 
 def _as_list(container: Any, key: str) -> list[Any]:

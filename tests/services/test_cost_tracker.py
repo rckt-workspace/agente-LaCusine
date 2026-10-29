@@ -65,39 +65,39 @@ def _tracker(store=None, daily=None, monthly=None, interaction=None, now=None):
     )
 
 
-def test_precheck_blocks_without_pricing_even_for_zero_budget_configuration():
+def test_reserve_blocks_without_pricing_fail_closed():
     tracker = CostTracker(store=InMemoryUsageStore(), pricing=None)
     with pytest.raises(BudgetExceededError) as excinfo:
-        tracker.precheck(Decimal("0"))
+        tracker.reserve("wamid.P", None, Decimal("0"))
     assert excinfo.value.code == "pricing_not_configured"
+    assert tracker.reservation_state("wamid.P") is None
 
 
-def test_daily_budget_counts_spend_since_bogota_midnight_only():
-    store = InMemoryUsageStore()
+def test_daily_budget_counts_reservations_since_bogota_midnight_only():
     now = datetime(2026, 10, 28, 15, 0, tzinfo=timezone.utc)  # 10:00 en Bogotá
     start_today = datetime(2026, 10, 28, 5, 0, tzinfo=timezone.utc)  # 00:00 en Bogotá
-    store.created.append((start_today - timedelta(minutes=1), Decimal("5")))  # ayer: no cuenta
-    store.created.append((start_today + timedelta(hours=1), Decimal("0.9")))  # hoy: sí cuenta
-    tracker = _tracker(store=store, daily=Decimal("1"), now=now)
+    tracker = _tracker(daily=Decimal("1"), now=now)
+    tracker.ledger.add_counted("old", Decimal("5"), start_today - timedelta(minutes=1))  # ayer: no cuenta
+    tracker.ledger.add_counted("today", Decimal("0.9"), start_today + timedelta(hours=1))  # hoy: sí cuenta
     with pytest.raises(BudgetExceededError) as excinfo:
-        tracker.precheck(Decimal("0.2"))
+        tracker.reserve("wamid.D1", None, Decimal("0.2"))
     assert excinfo.value.code == "daily_budget"
-    tracker_ok = _tracker(store=store, daily=Decimal("1"), now=now)
-    tracker_ok.precheck(Decimal("0.05"))  # 0.9 + 0.05 <= 1
+    tracker.reserve("wamid.D2", None, Decimal("0.05"))  # 0.9 + 0.05 <= 1
+    assert tracker.reservation_state("wamid.D2") == "reserved"
 
 
 def test_monthly_budget_uses_bogota_month_start():
+    store_time = datetime(2026, 10, 1, 4, 0, tzinfo=timezone.utc)  # 30/sep local: no cuenta
+    tracker = _tracker(monthly=Decimal("10"))
+    tracker.ledger.add_counted("sept", Decimal("9.9"), store_time)
     assert BOGOTA.utcoffset(None) == timedelta(hours=-5)
-    store = InMemoryUsageStore()
-    store.created.append((datetime(2026, 10, 1, 4, 0, tzinfo=timezone.utc), Decimal("9.9")))  # 30/sep local: no cuenta
-    tracker = _tracker(store=store, monthly=Decimal("10"))
-    tracker.precheck(Decimal("0.5"))
+    tracker.reserve("wamid.M1", None, Decimal("0.5"))
 
 
 def test_interaction_limit_is_checked_before_budgets():
     tracker = _tracker(interaction=Decimal("0.01"))
     with pytest.raises(BudgetExceededError) as excinfo:
-        tracker.precheck(Decimal("0.02"))
+        tracker.reserve("wamid.I1", None, Decimal("0.02"))
     assert excinfo.value.code == "interaction_limit"
 
 
