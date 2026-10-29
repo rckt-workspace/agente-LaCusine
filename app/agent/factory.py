@@ -51,6 +51,7 @@ def build_commercial_agent(
     turns_reader,
     handoff_repository,
     knowledge: KnowledgeService | None = None,
+    budget_ledger=None,
 ) -> CommercialAgent:
     provider = select_provider(settings)
     cost = CostTracker(
@@ -59,6 +60,7 @@ def build_commercial_agent(
         daily_budget_usd=settings.agent_daily_budget_usd,
         monthly_budget_usd=settings.agent_monthly_budget_usd,
         interaction_limit_usd=settings.agent_interaction_limit_usd,
+        ledger=budget_ledger,
     )
     return CommercialAgent(
         provider=provider,

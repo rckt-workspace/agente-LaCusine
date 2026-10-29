@@ -39,7 +39,7 @@ BASE_URL = "https://lacuisineappliances.co/products/"
 
 
 class Harness:
-    def __init__(self, provider=None, *, pricing=True, usage=None, daily=None, interaction=None,
+    def __init__(self, provider=None, *, pricing=True, usage=None, daily=None, monthly=None, interaction=None,
                  kill_switch=False, max_input_chars=1000, clock=None):
         self.products = product_fixtures()
         self.product_repo = InMemoryProductRepository(self.products)
@@ -54,6 +54,7 @@ class Harness:
             store=self.usage,
             pricing=TEST_PRICING if pricing else None,
             daily_budget_usd=daily,
+            monthly_budget_usd=monthly,
             interaction_limit_usd=interaction,
             clock=clock or (lambda: datetime.now(timezone.utc)),
         )
@@ -333,13 +334,12 @@ def test_billable_call_without_pricing_is_blocked_fail_closed():
     assert provider.calls == []
 
 
-def test_monthly_budget_counts_previous_spend_in_the_same_month():
+def test_monthly_budget_counts_previous_reservations_in_the_same_month():
     provider = FakeLLMProvider(name="anthropic", model="claude-haiku-5-5")
-    usage = InMemoryUsageStore()
-    usage.created.append((datetime.now(timezone.utc) - timedelta(minutes=1), Decimal("9.9999")))
-    h = Harness(provider, usage=usage, daily=None)
-    h.cost._monthly = Decimal("10")
+    h = Harness(provider, daily=None, monthly=Decimal("10"))
+    h.cost.ledger.add_counted("wamid.PREVIO", Decimal("9.9999"), datetime.now(timezone.utc) - timedelta(minutes=1))
     assert h.ask("Busco una cafetera").error_code == "monthly_budget"
+    assert provider.calls == []
 
 
 def test_successful_billable_call_records_estimated_cost_once():

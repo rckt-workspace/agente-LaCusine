@@ -57,6 +57,7 @@ class OutcomeStatus(str, Enum):
     SUPPRESSED_HUMAN_CONTROL = "suppressed_human_control"
     REFUSED_SENSITIVE = "refused_sensitive"
     REFUSED_INJECTION = "refused_injection"
+    REQUIRES_RECONCILIATION = "requires_reconciliation"
     DUPLICATE_SKIPPED = "duplicate_skipped"
     DISABLED = "disabled"
     BUDGET_BLOCKED = "budget_blocked"
@@ -78,6 +79,7 @@ class AgentOutcome:
     error_code: str | None = None
     dry_run: bool = False
     cost_usd: Decimal = Decimal("0")
+    billed_state: str | None = None
     details: dict = field(default_factory=dict)
 
 
@@ -177,12 +179,20 @@ class CommercialAgent:
 
         billable = self._provider.name != "fake"
         if billable:
+            # Una reserva previa sin liquidar significa que no se conoce si la llamada facturó:
+            # nunca se vuelve a llamar sola; el caso va a conciliación.
+            state = self._cost.reservation_state(call_id)
+            if state in ("reserved", "uncertain"):
+                logger.warning("agent_requires_reconciliation call_id=%s state=%s", call_id, state)
+                return AgentOutcome(OutcomeStatus.REQUIRES_RECONCILIATION, error_code=f"reservation_{state}")
+            if state == "settled":
+                return AgentOutcome(OutcomeStatus.DUPLICATE_SKIPPED, error_code="already_settled")
             try:
                 pricing = self._cost.pricing
                 if pricing is None:
                     raise BudgetExceededError("pricing_not_configured")
                 estimate_tokens = (len(request.system) + sum(len(m.content) for m in request.messages)) // 3 + 50
-                self._cost.precheck(worst_case_cost(pricing, estimate_tokens, request.max_output_tokens))
+                self._cost.reserve(call_id, conversation_id, worst_case_cost(pricing, estimate_tokens, request.max_output_tokens))
             except BudgetExceededError as exc:
                 logger.warning("agent_budget_blocked call_id=%s code=%s", call_id, exc.code)
                 return AgentOutcome(OutcomeStatus.BUDGET_BLOCKED, error_code=exc.code)
@@ -190,9 +200,16 @@ class CommercialAgent:
         try:
             response = self._provider.complete(request)
         except LLMError as exc:
-            logger.warning("agent_provider_error call_id=%s code=%s", call_id, exc.code)
+            logger.warning("agent_provider_error call_id=%s code=%s billed=%s", call_id, exc.code, exc.billed_state)
+            if billable:
+                if exc.billed_state == "not_billed":
+                    self._cost.release_reservation(call_id)
+                else:
+                    self._cost.mark_uncertain(call_id)
             self._record_failure_safely(call_id, conversation_id, exc.code)
-            return AgentOutcome(OutcomeStatus.PROVIDER_ERROR, error_code=exc.code, dry_run=dry_run)
+            return AgentOutcome(
+                OutcomeStatus.PROVIDER_ERROR, error_code=exc.code, dry_run=dry_run, billed_state=exc.billed_state,
+            )
 
         cost = self._cost.record_success(call_id, conversation_id, response)
 

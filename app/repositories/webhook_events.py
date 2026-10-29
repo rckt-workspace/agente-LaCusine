@@ -33,6 +33,7 @@ class WebhookEventRecord:
     payload: dict[str, Any]
     payload_sha256: str
     event_type: str = "message"
+    business_phone_id: str = ""
 
     def __post_init__(self) -> None:
         if not 0 < len(self.external_event_id) <= 128:
@@ -49,9 +50,9 @@ class WebhookEventRepository(Protocol):
 
 _INSERT_SQL = """
     insert into public.webhook_events
-        (provider, external_event_id, event_type, contact_wa_id, payload, payload_sha256, expires_at)
+        (provider, external_event_id, event_type, contact_wa_id, payload, payload_sha256, expires_at, business_phone_id)
     values
-        (%s, %s, %s, %s, %s, %s, now() + make_interval(days => %s))
+        (%s, %s, %s, %s, %s, %s, now() + make_interval(days => %s), %s)
     on conflict (provider, external_event_id) do nothing
     returning id
 """
@@ -83,6 +84,7 @@ class PostgresWebhookEventRepository:
                         Jsonb(record.payload),
                         record.payload_sha256,
                         self._retention_days,
+                        record.business_phone_id,
                     ),
                 ).fetchone()
                 if inserted is not None:
