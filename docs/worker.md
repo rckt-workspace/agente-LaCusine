@@ -1,6 +1,6 @@
 # Worker y procesamiento confiable — Fase 4
 
-Estado: implementado y probado contra PostgreSQL local. **No envía mensajes, no llama a Claude, no se conecta a Meta ni a Supabase Cloud.** El proveedor de IA del worker es el simulado (`AGENT_DRY_RUN=true`).
+Estado: implementado y probado contra PostgreSQL local. **El envío a WhatsApp existe pero está desactivado por defecto** (ver [whatsapp-integration.md](whatsapp-integration.md)): con `WHATSAPP_DRY_RUN=true` o `META_SEND_ENABLED=false` ninguna solicitud sale. No llama a Claude en producción ni se conecta a Supabase Cloud. El proveedor de IA del worker es el simulado (`AGENT_DRY_RUN=true`).
 
 Decisión de cola: [ADR 0001](adr/0001-postgresql-as-job-queue.md).
 
@@ -86,7 +86,7 @@ Limitación explícita: ningún sistema puede garantizar que un proveedor extern
 
 ## Respuestas: generada ≠ enviada ≠ entregada
 
-- Un resultado de IA crea una fila en `outbound_messages` con `delivery_status = 'pending'`. **Esta fase termina ahí.**
+- Un resultado de IA crea una fila en `outbound_messages` con `delivery_status = 'pending'`. El dispatcher la reclama, aplica las reglas de control humano y ventana, y la envía solo si el envío está autorizado (ver [whatsapp-integration.md](whatsapp-integration.md)).
 - `sent`, `delivered`, `failed` y `cancelled` existen en el modelo, pero solo los escribirá el adaptador de WhatsApp en una fase posterior.
 - La respuesta y el estado comercial del lead se escriben en **una sola transacción**. Si la inserción falla, la actualización del lead no se aplica (prueba de integración).
 - Una respuesta por evento, como máximo.
@@ -150,7 +150,7 @@ Antes de desplegar se requiere: autorización, proyecto Supabase real con las mi
 1. **Presupuesto y auditoría en la misma base, no en la misma transacción que la llamada externa.** Un fallo entre la llamada y la liquidación deja la reserva en `reserved`, que se concilia a mano. No hay conciliación automática todavía.
 2. **Timeout de procesamiento.** No se pueden matar hilos de Python. `WORKER_PROCESSING_TIMEOUT_SECONDS` se aplica como advertencia (`job_slow`) y como límite del proveedor; si el proceso se queda colgado, el lease vence y el trabajo se recupera.
 3. **Un contacto con `manual_review` queda bloqueado.** Es intencional (no responder fuera de orden), pero requiere que una persona lo resuelva. No hay todavía una herramienta para resolver revisiones.
-4. **Sin envío real.** Las respuestas quedan `pending`. El adaptador de WhatsApp es la fase siguiente.
+4. **Envío real deshabilitado.** El adaptador y el dispatcher están implementados y probados con transporte simulado. Hasta la autorización de la fase de salida, las respuestas quedan `pending`.
 5. **Vocabulario de búsqueda en memoria por proceso.** Tras reimportar el catálogo hay que reiniciar el worker.
 6. **Volumen.** PostgreSQL es suficiente para el volumen previsto. Si la tabla de eventos crece demasiado, el ADR 0001 describe la migración del `JobRepository` a otro broker sin tocar el procesamiento.
 7. **Pruebas de carga no realizadas.** La concurrencia se verificó con 2 a 8 hilos, no con cargas de producción.

@@ -1,0 +1,66 @@
+# Lista de verificación de salida a producción
+
+Esta lista es una **puerta**: ninguna casilla se marca por intención. Cada una exige evidencia. Mientras una esté abierta, el sistema no envía mensajes reales ni llama a Claude en producción.
+
+Estado actual: **todas las casillas de integración están abiertas.** Las de código están cumplidas en la rama de Fase 5, verificadas con las pruebas del repositorio.
+
+## 1. Código y pruebas (verificable en el repositorio)
+
+- [ ] Pruebas unitarias aprobadas sin base de datos y sin red.
+- [ ] Pruebas de integración aprobadas contra PostgreSQL local protegido por el guard.
+- [ ] Flujo extremo a extremo simulado aprobado (webhook firmado → worker → IA simulada → outbox → envío simulado → estado entregado).
+- [ ] `pip check` limpio en `.venv`.
+- [ ] `git diff --check` y `git diff --cached --check` limpios.
+- [ ] Ningún secreto en el stage (escaneo de claves, tokens y URLs con credenciales).
+- [ ] Rama de la fase revisada y PR en borrador; ninguna fusión sin aprobación.
+
+## 2. Configuración (en el panel de Render, nunca en Git)
+
+- [ ] Los valores de `META_APP_SECRET`, `META_VERIFY_TOKEN`, `META_ACCESS_TOKEN`, `META_PHONE_NUMBER_ID`, `DATABASE_URL` y `ANTHROPIC_API_KEY` se introdujeron en el panel.
+- [ ] `META_GRAPH_API_VERSION` es la versión vigente verificada en la documentación de Meta el día de la puesta en marcha.
+- [ ] `WHATSAPP_ALLOWED_RECIPIENTS` contiene solo números autorizados por escrito.
+- [ ] `ANTHROPIC_MODEL` y las tarifas (`ANTHROPIC_PRICE_*`) están definidas por el equipo y revisadas contra la documentación de Anthropic el día del presupuesto.
+- [ ] Presupuestos diario, mensual y por interacción definidos con un responsable que los apruebe.
+- [ ] `AGENT_KILL_SWITCH` probado: al ponerlo en `true`, el agente se detiene sin llamadas.
+
+## 3. Base de datos (Supabase)
+
+- [ ] Las migraciones 1 a 9 se aplicaron en un proyecto de prueba aislado sin errores.
+- [ ] Respaldo o punto de restauración confirmado antes de aplicar en producción.
+- [ ] Rol del backend creado con mínimo privilegio y verificado.
+- [ ] RLS activa en todas las tablas; `anon` y `authenticated` sin privilegios (verificado con consultas de solo lectura).
+- [ ] Cadena de conexión elegida según [supabase-deployment.md](supabase-deployment.md), con SSL.
+- [ ] `/ready` responde 200 desde Render.
+
+## 4. Meta y WhatsApp
+
+- [ ] Diagnóstico de coexistencia completado por el responsable de la cuenta (ver [whatsapp-integration.md](whatsapp-integration.md)).
+- [ ] Permisos de la aplicación verificados y webhook suscrito a `messages` de la cuenta correcta.
+- [ ] Número de prueba de Meta usado para la primera verificación, autorizado por escrito.
+- [ ] Webhook público en HTTPS verificado con el handshake de Meta.
+- [ ] Estados de entrega recibidos y aplicados en el número de prueba.
+- [ ] Plantillas: decisión comercial registrada. Mientras no exista una plantilla aprobada, las conversaciones fuera de ventana quedan bloqueadas.
+
+## 5. Operación
+
+- [ ] Background Worker desplegado con `WORKER_ENABLED=false` y revisado en logs (`worker_started` sin errores de configuración).
+- [ ] Procedimiento de revisión de `manual_review` y de reservas `uncertain` definido, con responsable.
+- [ ] Procedimiento de conciliación de envíos `uncertain` definido, con responsable.
+- [ ] Monitoreo de `/health`, `/ready` y del conteo de estados en la base.
+- [ ] Plan de rollback documentado y ensayado (redespliegue del commit anterior).
+- [ ] Autoriza el equipo legal la retención de `WEBHOOK_EVENT_RETENTION_DAYS` y de los contenidos de mensajes.
+- [ ] Las políticas marcadas como pendientes de validación legal no se presentan a clientes como afirmaciones definitivas.
+
+## 6. Piloto controlado (solo con autorización expresa)
+
+- [ ] `META_SEND_ENABLED=true` y `WHATSAPP_DRY_RUN=false` activados **solo** para el piloto, con la lista de destinatarios reducida.
+- [ ] `WORKER_ENABLED=true` tras confirmar todo lo anterior.
+- [ ] Un responsable observa los primeros envíos y los estados de entrega.
+- [ ] Criterio de parada definido: cualquier `uncertain` no resuelto o error 401/403 detiene el piloto.
+
+## Qué no cubre esta lista
+
+- Validación jurídica de las políticas comerciales. Corresponde a LCI.
+- Costos reales de Meta, Anthropic, Supabase y Render. Verificar en sus páginas de precios.
+- Pruebas de carga a volumen de producción.
+- Cumplimiento de protección de datos más allá de la retención y los accesos descritos en el repositorio.
