@@ -1,0 +1,17 @@
+# No copiar a la imagen de contenedor: secretos, entornos locales y datos.
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+.git/
+.github/
+docs/
+tests/
+*.xlsx
+*.pdf
+*.log

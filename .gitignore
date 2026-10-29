@@ -1,5 +1,17 @@
+# Secretos y configuración local: nunca versionar
 .env
+.env.*
+!.env.example
+!.env.sample
+
+# Entornos y cachés de Python
 .venv/
+venv/
 __pycache__/
 .pytest_cache/
 *.pyc
+
+# Herramientas locales
+.idea/
+.vscode/
+*.log

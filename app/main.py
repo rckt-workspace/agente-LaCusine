@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 
 from app.api.webhook import router as webhook_router
 from app.core.config import Settings
+from app.core.env import load_if_enabled
 from app.db.pool import create_pool
 from app.repositories.webhook_events import PostgresWebhookEventRepository, WebhookEventRepository
 
@@ -73,4 +74,5 @@ def create_app(
     return app
 
 
+load_if_enabled()  # solo con LACUSINE_LOAD_DOTENV=true
 app = create_app()

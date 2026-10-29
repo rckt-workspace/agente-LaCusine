@@ -12,6 +12,7 @@ import sys
 import threading
 
 from app.core.config import Settings
+from app.core.env import load_if_enabled
 from app.worker.bootstrap import build_worker
 from app.worker.config import WorkerSettings
 
@@ -20,6 +21,9 @@ logger = logging.getLogger("lacusine.worker")
 
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    loaded = load_if_enabled()  # solo con LACUSINE_LOAD_DOTENV=true; nunca sobrescribe variables existentes
+    if loaded:
+        logger.info("local_env_loaded count=%d", len(loaded))
     try:
         worker_settings = WorkerSettings.from_env()
         settings = Settings.from_env()
