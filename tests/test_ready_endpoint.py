@@ -9,8 +9,8 @@ def test_liveness_does_not_depend_on_database():
     assert client.get("/health").json() == {"status": "ok"}
 
 
-def test_readiness_reports_not_configured_without_database():
+def test_readiness_without_database_reveals_nothing_about_configuration():
     client = TestClient(create_app(settings=Settings(meta_app_secret=None, meta_verify_token=None)))
     response = client.get("/ready")
     assert response.status_code == 503
-    assert response.json() == {"status": "not_configured"}
+    assert response.json() == {"status": "unavailable"}

@@ -63,7 +63,7 @@ def create_app(
     def ready() -> Response:
         # Readiness: la dependencia crítica (PostgreSQL) responde. Sin detalles de error.
         if pool is None:
-            return JSONResponse({"status": "not_configured"}, status_code=503)
+            return JSONResponse({"status": "unavailable"}, status_code=503)
         try:
             with pool.connection() as conn:
                 conn.execute("select 1")
