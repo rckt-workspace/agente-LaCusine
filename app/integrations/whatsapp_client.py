@@ -74,7 +74,11 @@ class MetaRejectedError(WhatsAppError):
 
 
 class ConnectionFailedError(WhatsAppError):
-    """La conexión no se estableció: la solicitud no salió. Reintento seguro."""
+    """La solicitud no salió del proceso (conexión no establecida o sin conexión disponible). Reintento seguro.
+
+    Solo se usa para errores que ocurren ANTES de enviar datos. Un error de lectura o de escritura después
+    de iniciar la solicitud es "uncertain", aunque sea un error de transporte.
+    """
 
     code = "connection_failed"
     retryable = True
@@ -189,6 +193,12 @@ class CloudApiSender:
         except httpx.ConnectError:
             # La conexión no se estableció: la solicitud no salió.
             raise ConnectionFailedError() from None
+        except httpx.PoolTimeout:
+            # No hubo conexión disponible: la solicitud nunca salió del proceso.
+            raise ConnectionFailedError("pool_timeout") from None
+        except httpx.ConnectTimeout:
+            # El intento de conexión no se completó: la solicitud no llegó a enviarse.
+            raise ConnectionFailedError("connect_timeout") from None
         except httpx.TimeoutException:
             # Tras enviar la solicitud, un timeout no dice si Meta la procesó.
             raise UncertainSendError("timeout") from None

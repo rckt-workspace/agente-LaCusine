@@ -21,6 +21,29 @@ from app.security.signature import verify_meta_signature
 router = APIRouter(prefix="/webhook", tags=["whatsapp"])
 
 
+async def read_limited_body(request: Request, limit: int) -> bytes:
+    """Lee el cuerpo sin superar `limit` bytes. Rechaza antes de acumular más de lo permitido.
+
+    Si Content-Length ya declara un tamaño excesivo, no se lee nada. Si no hay Content-Length (chunked),
+    se corta en cuanto el acumulado supera el límite. La firma se calcula después, sobre estos bytes.
+    """
+    declared = request.headers.get("content-length")
+    if declared is not None:
+        try:
+            if int(declared) > limit:
+                raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail="payload_too_large")
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid_content_length") from None
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in request.stream():
+        total += len(chunk)
+        if total > limit:
+            raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail="payload_too_large")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 @router.get("")
 def verify_webhook(request: Request) -> PlainTextResponse:
     settings = request.app.state.settings
@@ -45,9 +68,7 @@ async def receive_webhook(request: Request) -> Response:
         logger.error("webhook_not_configured")
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="not_configured")
 
-    raw_body = await request.body()
-    if len(raw_body) > settings.max_body_bytes:
-        raise HTTPException(status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail="payload_too_large")
+    raw_body = await read_limited_body(request, settings.max_body_bytes)
 
     signature = request.headers.get("X-Hub-Signature-256")
     if not verify_meta_signature(settings.meta_app_secret, raw_body, signature):
@@ -65,6 +86,14 @@ async def receive_webhook(request: Request) -> Response:
         # El código de error describe la regla incumplida; nunca incluye el contenido recibido.
         logger.warning("webhook_payload_rejected reason=%s", exc)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid_payload")
+
+    line = settings.meta_phone_number_id
+    if line:
+        # MVP de línea única: eventos de otras líneas de negocio no se procesan ni se almacenan.
+        foreign = [m for m in messages if m.business_phone_id != line]
+        messages = [m for m in messages if m.business_phone_id == line]
+        if foreign:
+            logger.warning("webhook_foreign_business_line_ignored count=%d", len(foreign))
 
     accepted = 0
     duplicates = 0
@@ -101,6 +130,8 @@ async def receive_webhook(request: Request) -> Response:
     except PayloadValidationError as exc:
         logger.warning("webhook_payload_rejected reason=%s", exc)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid_payload")
+    if line:
+        statuses = [e for e in statuses if e.business_phone_id == line]
     for event in statuses:
         record = WebhookEventRecord(
             external_event_id=event.external_event_id,

@@ -7,6 +7,7 @@ import httpx
 import pytest
 
 from app.integrations.whatsapp_client import (
+    WhatsAppError,
     AuthRejectedError,
     BusinessNumberMismatchError,
     BusyError,
@@ -264,3 +265,34 @@ def test_simulated_sender_is_thread_safe_under_concurrency():
         t.join()
     ids = {r.idempotency_key for r in simulator.sent}
     assert len(ids) == 20
+
+
+# --- Clasificación de errores de transporte ---
+
+@pytest.mark.parametrize("error_factory, outcome", [
+    (lambda req: httpx.ConnectError("sin conexión", request=req), "not_sent"),
+    (lambda req: httpx.ConnectTimeout("handshake incompleto", request=req), "not_sent"),
+    (lambda req: httpx.PoolTimeout("sin conexiones libres", request=req), "not_sent"),
+    (lambda req: httpx.ReadTimeout("sin respuesta", request=req), "uncertain"),
+    (lambda req: httpx.ReadError("conexión cortada tras enviar", request=req), "uncertain"),
+    (lambda req: httpx.WriteError("fallo al escribir el cuerpo", request=req), "uncertain"),
+    (lambda req: httpx.RemoteProtocolError("servidor cerró sin respuesta", request=req), "uncertain"),
+])
+def test_transport_errors_are_classified_by_whether_the_request_may_have_left(error_factory, outcome):
+    def handler(request):
+        raise error_factory(request)
+
+    with pytest.raises(WhatsAppError) as excinfo:
+        _sender(handler).send_text(_request())
+    assert excinfo.value.outcome == outcome
+
+
+def test_a_lost_http_response_is_never_reported_as_a_rejection():
+    def handler(request):
+        raise httpx.ReadError("sin respuesta", request=request)
+
+    with pytest.raises(WhatsAppError) as excinfo:
+        _sender(handler).send_text(_request())
+    assert not isinstance(excinfo.value, MetaRejectedError)
+    assert excinfo.value.outcome == "uncertain"
+    assert excinfo.value.retryable is False
