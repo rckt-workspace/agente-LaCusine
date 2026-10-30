@@ -67,23 +67,36 @@ def test_deployment_files_contain_no_credential_patterns():
         assert not re.search(r"postgres(ql)?://[^\s:]+:[^\s@]{4,}@", text), name
 
 
-def test_render_blueprint_has_web_and_worker_with_auto_deploy_off():
+def test_render_blueprint_is_a_single_free_docker_web_service_with_auto_deploy_off():
     blocks = _render_services()
-    assert [b.split("\n")[0].strip() for b in blocks] == ["web", "worker"]
-    for block in blocks:
-        assert "autoDeployTrigger: off" in block
+    assert [b.split("\n")[0].strip() for b in blocks] == ["web"]
+    block = blocks[0]
+    assert "runtime: docker" in block
+    assert "plan: free" in block
+    assert "plan: starter" not in block
+    assert "dockerfilePath: ./Dockerfile" in block
+    assert 'autoDeployTrigger: "off"' in block
 
 
-def test_render_worker_has_no_health_check_path():
-    worker = _render_services()[1]
-    assert "healthCheckPath" not in worker
-    assert "startCommand: python -m app.worker.main" in worker
+def test_render_blueprint_declares_no_second_service_or_background_worker():
+    text = _read("render.yaml")
+    assert "type: worker" not in text
+    assert text.count("  - type: ") == 1
 
 
-def test_render_web_uses_dynamic_port_and_liveness_check():
-    web = _render_services()[0]
-    assert "uvicorn app.main:app --host 0.0.0.0 --port $PORT" in web
-    assert "healthCheckPath: /health" in web
+def test_render_demo_runs_api_and_worker_in_combined_mode_with_health_check():
+    block = _render_services()[0]
+    assert "healthCheckPath: /health" in block
+    assert "key: APP_RUN_MODE\n        value: demo-combined" in block
+    assert "key: DEMO_ENABLED\n        value: \"true\"" in block
+
+
+def test_render_demo_keeps_external_integrations_disabled():
+    block = _render_services()[0]
+    assert "key: META_SEND_ENABLED\n        value: \"false\"" in block
+    assert "key: WHATSAPP_DRY_RUN\n        value: \"true\"" in block
+    assert "key: ANTHROPIC_ENABLED\n        value: \"false\"" in block
+    assert "key: AGENT_DRY_RUN\n        value: \"true\"" in block
 
 
 def test_render_secret_names_never_get_literal_values():
@@ -120,8 +133,7 @@ def test_commercial_spreadsheets_and_pdfs_are_ignored_by_git():
         assert result.returncode == 0, f"{name} no está ignorado por Git"
 
 
-def test_both_render_services_declare_the_business_line():
-    # Sin META_PHONE_NUMBER_ID en el web, el webhook almacena eventos de otras líneas antes de descartarlos.
-    web, worker = _render_services()
-    for block in (web, worker):
-        assert re.search(r"- key: META_PHONE_NUMBER_ID\n\s+sync: false", block)
+def test_render_service_declares_the_business_line_as_secret():
+    # Sin META_PHONE_NUMBER_ID el webhook almacena eventos de otras líneas antes de descartarlos.
+    (block,) = _render_services()
+    assert re.search(r"- key: META_PHONE_NUMBER_ID\n\s+sync: false", block)
