@@ -13,5 +13,8 @@ __pycache__/
 docs/
 tests/
 *.xlsx
+*.xls
+*.xlsm
 *.pdf
+*.csv
 *.log
