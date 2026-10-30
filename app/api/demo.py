@@ -108,9 +108,28 @@ def _synthetic_contact() -> str:
     return SYNTHETIC_PREFIX + "".join(secrets.choice("0123456789") for _ in range(8))
 
 
-def build_demo_router(*, token: str, pool, line: str, retention_days: int) -> APIRouter:
+def normalise_public_origin(value: str) -> tuple[str, str]:
+    """Valida DEMO_PUBLIC_ORIGIN. Devuelve (origen, host). HTTPS es obligatorio salvo en loopback."""
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(value.strip())
+    if parts.scheme not in ("https", "http") or not parts.netloc:
+        raise ValueError("demo_public_origin_invalid")
+    if parts.username or parts.password or parts.query or parts.fragment or parts.path not in ("", "/"):
+        raise ValueError("demo_public_origin_invalid")
+    if parts.scheme == "http" and parts.hostname not in ("localhost", "127.0.0.1", "::1"):
+        raise ValueError("demo_public_origin_invalid")
+    if "*" in value:
+        raise ValueError("demo_public_origin_invalid")
+    return f"{parts.scheme}://{parts.netloc.lower()}", parts.netloc.lower()
+
+
+def build_demo_router(*, token: str, pool, line: str, retention_days: int,
+                      public_origin: str | None = None) -> APIRouter:
     """Construye la ruta /demo. Solo se llama si DEMO_ENABLED=true, con token, base y línea configurados."""
     router = APIRouter(prefix="/demo", tags=["demo"], include_in_schema=False)
+    expected_origin, expected_host = (normalise_public_origin(public_origin) if public_origin
+                                      else (None, None))
     session = _Session()
     login_limiter = _Limiter()
     api_limiter = _Limiter()
@@ -129,12 +148,26 @@ def build_demo_router(*, token: str, pool, line: str, retention_days: int) -> AP
         return response
 
     def _require_same_origin(request: Request) -> None:
-        """Defensa frente a CSRF: JSON obligatorio y origen igual al del servidor cuando el navegador lo indica."""
+        """Defensa frente a CSRF y a peticiones de otro sitio.
+
+        Con DEMO_PUBLIC_ORIGIN configurado, el origen esperado es fijo: NO se usan el esquema recibido ni las
+        cabeceras X-Forwarded-*, que cualquier cliente puede falsificar. Render termina HTTPS y entrega HTTP
+        al contenedor; por eso el esquema del propio request no sirve como referencia.
+        Sin DEMO_PUBLIC_ORIGIN (solo desarrollo local) se compara con el host de la petición.
+        Sin cabecera Origin (clientes no navegador como curl) solo se exige JSON; el token y la sesión siguen
+        siendo obligatorios. Los navegadores siempre envían Origin en un POST.
+        """
         content_type = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
         if content_type != "application/json":
             raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE)
         origin = request.headers.get("origin")
-        if origin is not None and origin != f"{request.url.scheme}://{request.headers.get('host', '')}":
+        if expected_origin is not None:
+            host = (request.headers.get("host") or "").lower()
+            if host != expected_host:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+            if origin is not None and origin != expected_origin:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+        elif origin is not None and origin != f"{request.url.scheme}://{request.headers.get('host', '')}":
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
         if request.headers.get("sec-fetch-site", "same-origin") not in ("same-origin", "none"):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
@@ -150,6 +183,11 @@ def build_demo_router(*, token: str, pool, line: str, retention_days: int) -> AP
         if not session.valid(request.cookies.get("demo_session")):
             return _secure_headers(HTMLResponse(LOGIN_HTML))
         return _secure_headers(HTMLResponse(APP_HTML.replace("__NOTE__", DEMO_LINE_NOTE)))
+
+    @router.get("/login.js")
+    def login_script() -> Response:
+        # Sin sesión a propósito: es el script que inicia sesión. No contiene secretos.
+        return _secure_headers(PlainTextResponse(LOGIN_JS, media_type="application/javascript"))
 
     @router.get("/app.js")
     def script(request: Request) -> Response:
@@ -255,14 +293,16 @@ button{background:#2f7dd1;color:#fff;border:0;border-radius:6px;cursor:pointer}.
 </head><body><main><h1>Demo del agente</h1><p class="note">Acceso restringido. Datos sintéticos.</p>
 <form id="login"><label>Token de demostración<input id="token" type="password" autocomplete="off" required></label>
 <button type="submit">Entrar</button></form><p id="msg" class="note"></p></main>
-<script>
+<script src="/demo/login.js"></script></body></html>"""
+
+LOGIN_JS = """
 document.getElementById('login').addEventListener('submit', async (e) => {
   e.preventDefault();
   const r = await fetch('/demo/login', {method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({token: document.getElementById('token').value})});
   if (r.ok) { location.reload(); } else { document.getElementById('msg').textContent = 'Acceso no válido o demasiados intentos.'; }
 });
-</script></body></html>"""
+"""
 
 APP_HTML = """<!doctype html><html lang="es"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Demo LCA</title>
@@ -275,6 +315,9 @@ textarea{width:100%;min-height:70px;box-sizing:border-box;font:inherit;padding:8
 button{font:inherit;padding:8px 12px;border:0;border-radius:6px;background:#2f7dd1;color:#fff;cursor:pointer;margin-top:6px}
 table{width:100%;border-collapse:collapse;font-size:13px}td,th{border-bottom:1px solid #2d4766;padding:4px;text-align:left;vertical-align:top}
 .muted{color:#9fb3c8;font-size:12px}
+.scroll{overflow-x:auto;max-width:100%}
+.grid>*{min-width:0}
+td,th{word-break:break-word;overflow-wrap:anywhere}
 </style></head><body>
 <div class="banner">__NOTE__</div>
 <h1>Agente comercial · demostración</h1>
@@ -298,7 +341,10 @@ const table = (headers, rows) => {
   const t = document.createElement('table');
   const head = document.createElement('tr'); headers.forEach(h => head.appendChild(el('th', h))); t.appendChild(head);
   rows.forEach(r => { const tr = document.createElement('tr'); r.forEach(c => tr.appendChild(el('td', String(c ?? '—')))); t.appendChild(tr); });
-  return t;
+  const wrap = document.createElement('div');
+  wrap.className = 'scroll';
+  wrap.appendChild(t);
+  return wrap;
 };
 async function api(path, options) {
   const r = await fetch(path, Object.assign({headers: {'Content-Type': 'application/json'}}, options || {}));

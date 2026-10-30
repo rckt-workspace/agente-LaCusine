@@ -89,6 +89,7 @@ class Settings:
     agent_kill_switch: bool = False
     demo_enabled: bool = False  # solo para la demostración en entorno aislado. Nunca en producción.
     demo_token: str | None = field(default=None, repr=False)
+    demo_public_origin: str | None = None  # p. ej. https://lacusine-demo.onrender.com
     advisor_notifier: str = "simulated"  # único canal disponible hoy; cualquier otro valor falla al arrancar
     agent_max_input_chars: int = 1000
     agent_max_context_chars: int = 3000
@@ -133,6 +134,7 @@ class Settings:
             agent_kill_switch=_bool("AGENT_KILL_SWITCH", False),
             demo_enabled=_bool("DEMO_ENABLED", False),
             demo_token=os.environ.get("DEMO_TOKEN") or None,
+            demo_public_origin=os.environ.get("DEMO_PUBLIC_ORIGIN") or None,
             advisor_notifier=(os.environ.get("ADVISOR_NOTIFIER") or "simulated").strip().lower(),
             agent_max_input_chars=_int("AGENT_MAX_INPUT_CHARS", 1000),
             agent_max_context_chars=_int("AGENT_MAX_CONTEXT_CHARS", 3000),

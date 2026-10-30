@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Response
 from fastapi.responses import JSONResponse
 
-from app.api.demo import build_demo_router
+from app.api.demo import build_demo_router, normalise_public_origin
 from app.api.webhook import router as webhook_router
 from app.core.config import Settings
 from app.core.env import load_if_enabled
@@ -63,6 +63,12 @@ def create_app(
             raise RuntimeError("demo_with_meta_send_refused")
         if not settings.meta_phone_number_id:
             raise RuntimeError("demo_line_missing")
+        if not settings.demo_public_origin:
+            raise RuntimeError("demo_public_origin_missing")
+        try:
+            normalise_public_origin(settings.demo_public_origin)
+        except ValueError as exc:
+            raise RuntimeError(str(exc)) from None
         if pool is None:
             if not settings.database_url:
                 raise RuntimeError("demo_database_missing")
@@ -71,6 +77,7 @@ def create_app(
         app.include_router(build_demo_router(
             token=settings.demo_token, pool=pool, line=settings.meta_phone_number_id,
             retention_days=settings.webhook_event_retention_days,
+            public_origin=settings.demo_public_origin,
         ))
 
     @app.get("/health", tags=["ops"])

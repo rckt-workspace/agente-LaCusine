@@ -84,7 +84,11 @@ def test_repeated_failed_logins_are_rate_limited_even_with_the_right_token(clien
     ({"demo_enabled": True, "demo_token": TOKEN, "meta_send_enabled": True,
       "meta_phone_number_id": "100200300400"}, "demo_with_meta_send_refused"),
     ({"demo_enabled": True, "demo_token": TOKEN}, "demo_line_missing"),
-    ({"demo_enabled": True, "demo_token": TOKEN, "meta_phone_number_id": "100200300400"}, "demo_database_missing"),
+    ({"demo_enabled": True, "demo_token": TOKEN, "meta_phone_number_id": "100200300400",
+      "demo_public_origin": "https://lacusine-demo.onrender.com"}, "demo_database_missing"),
+    ({"demo_enabled": True, "demo_token": TOKEN, "meta_phone_number_id": "100200300400"}, "demo_public_origin_missing"),
+    ({"demo_enabled": True, "demo_token": TOKEN, "meta_phone_number_id": "100200300400",
+      "demo_public_origin": "http://lacusine-demo.onrender.com"}, "demo_public_origin_invalid"),
 ])
 def test_demo_refuses_to_start_when_anything_is_missing_or_unsafe(settings_kwargs, error):
     settings = Settings(meta_app_secret=None, meta_verify_token=None, **settings_kwargs)

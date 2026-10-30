@@ -24,6 +24,7 @@ if not TEST_DATABASE_URL:
 
 LINE = "100200300400"
 TOKEN = "token-demo-integracion-7d2e9c"
+PUBLIC = "https://lacusine-demo.onrender.com"  # origen público configurado; el cliente de prueba lo usa como host
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -44,6 +45,7 @@ def clean(schema_ready):
 def _settings():
     return Settings(meta_app_secret=None, meta_verify_token=None, database_url=TEST_DATABASE_URL,
                     demo_enabled=True, demo_token=TOKEN, meta_phone_number_id=LINE,
+                    demo_public_origin=PUBLIC,
                     meta_send_enabled=False, whatsapp_dry_run=True, anthropic_enabled=False, agent_dry_run=True)
 
 
@@ -60,7 +62,7 @@ def _worker_cycle(settings, owner):
 
 def test_demo_runs_the_real_pipeline_with_simulated_providers_only():
     settings = _settings()
-    with TestClient(create_app(settings=settings), base_url="https://testserver") as client:
+    with TestClient(create_app(settings=settings), base_url=PUBLIC) as client:
         assert client.post("/demo/login", json={"token": TOKEN}).status_code == 200
 
         # 1. El visitante envía un mensaje sintético desde un anuncio.
