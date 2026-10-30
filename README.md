@@ -144,7 +144,7 @@ Dependencias de ejecución: `fastapi 0.141.1`, `uvicorn 0.52.3`, `psycopg 3.3.6`
 .venv\Scripts\python.exe -m pytest -q tests --ignore=tests/integration
 ```
 
-→ 511 pasan (1 opcional omitido: catálogo real).
+→ 512 pasan (1 opcional omitido: catálogo real).
 
 **Integración** (PostgreSQL real, base desechable local):
 
@@ -171,7 +171,7 @@ Las pruebas de integración reinician el esquema `public`. Por eso exigen **toda
 
 Si `TEST_DATABASE_URL` está definida pero es insegura, el módulo **falla**; no se omite. Las pruebas del guard son unitarias y nunca se conectan a ninguna base.
 
-**Todas:** `python -m pytest -q` → 627 pasan con la base de pruebas (511 unitarias + 116 de integración) y 1 se omite (prueba opcional del catálogo real). Sin base de datos: 511 pasan y 8 se omiten, cada una con su motivo (7 módulos de integración y la prueba opcional).
+**Todas:** `python -m pytest -q` → 628 pasan con la base de pruebas (512 unitarias + 116 de integración) y 1 se omite (prueba opcional del catálogo real). Sin base de datos: 512 pasan y 8 se omiten, cada una con su motivo (7 módulos de integración y la prueba opcional).
 
 Las pruebas que dependen de la base de datos exigen `TEST_DATABASE_URL`; la contraseña del contenedor se pasa solo por variable de entorno del proceso y nunca se escribe en el repositorio.
 
@@ -196,6 +196,7 @@ Las pruebas que dependen de la base de datos exigen `TEST_DATABASE_URL`; la cont
 - **Worker en espera:** con `WORKER_ENABLED` distinto de `true`, el proceso no sale ni consume la cola.
 - **Conciliación:** `python -m app.admin.cli` resuelve casos inciertos con guardas, motivo y auditoría. No expone endpoints HTTP.
 - **Catálogo:** procedimiento en [catalogo-operacion.md](docs/catalogo-operacion.md). Sin importación automática.
+- **Operación del piloto (Fase 6, preparación):** orden de fusión, Supabase de prueba, Render, variables, primer mensaje y criterios GO / NO-GO en [operacion-piloto.md](docs/operacion-piloto.md). Nada de ello se ha ejecutado.
 
 ## Pendiente (no implementado, sin autorización)
 
