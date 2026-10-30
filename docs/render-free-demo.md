@@ -28,10 +28,10 @@ Medido en esta máquina con `docker run --memory=512m --cpus=0.1`, PostgreSQL lo
 | Procesos | API (uvicorn) y worker, un solo worker |
 | Memoria en uso tras un flujo completo | ~130 MiB de 512 MiB |
 | CPU en reposo | ~0,6 % |
-| Tiempo hasta responder `/health` bajo 0,1 CPU | Unos 36 segundos en el primer arranque, medidos |
+| Tiempo hasta responder `/health` bajo 0,1 CPU | Entre 36 y 84 segundos en las mediciones realizadas. Depende de la CPU: la importación de la aplicación tarda unos 40 segundos con 0,1 CPU. Precompilar el bytecode no produjo una mejora medible |
 | Consumo durante el flujo completo (mensajes, worker, transferencias) | 100 a 130 MiB de memoria; CPU entre 0,6 % y 10 % |
 
-**Conclusión:** la memoria y la CPU caben de forma estable en el límite. El arranque es lento (unos 36 segundos). Si Render Free reinicia el servicio por tiempo de arranque, el `healthCheckPath` a `/health` (ya configurado) debe dar más margen en el panel.
+**Conclusión:** la memoria y la CPU caben de forma estable en el límite. El arranque es lento (entre 36 y 84 segundos medidos). Si Render Free reinicia el servicio por tiempo de arranque, el `healthCheckPath` a `/health` (ya configurado) debe dar más margen en el panel.
 
 **Qué NO se ha medido:** el comportamiento con carga sostenida de muchos visitantes ni varias horas de ejecución en Render real. Las cifras son de un contenedor local con los mismos límites.
 
@@ -54,6 +54,7 @@ Introducir los valores en el panel de Render. **Nunca** en el repositorio. Solo 
 |---|---|---|
 | `APP_RUN_MODE` | `render.yaml` | `demo-combined` |
 | `DEMO_ENABLED` | `render.yaml` | `true` (solo en este destino) |
+| `DEMO_PUBLIC_ORIGIN` | panel | `https://<servicio>.onrender.com`, exacto, sin ruta. Obligatoria: sin ella la demo no arranca. Se conoce tras crear el servicio |
 | `DEMO_TOKEN` | panel (secreto) | Token aleatorio de al menos 24 caracteres, generado fuera del repositorio |
 | `DATABASE_URL` | panel (secreto) | PostgreSQL de demostración, con rol `lacusine_app` y SSL |
 | `META_APP_SECRET` | panel (secreto) | Valor de la aplicación de prueba, si se usa el webhook |
