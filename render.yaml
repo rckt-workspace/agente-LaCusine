@@ -1,3 +1,6 @@
+# ESTADO: DESCARTADO. RCKT suspendió Render como destino de despliegue (decisión de la fase 6).
+# Este archivo se conserva solo como registro de la decisión anterior. No usarlo para desplegar.
+# La arquitectura futura es AWS (docs/aws-architecture.md); el entorno local es Docker (docs/local-development.md).
 # Blueprint de Render. NO CREA SERVICIOS POR SÍ MISMO: se usa al crear el Blueprint desde el panel
 # de Render, con autorización expresa del equipo. Ver docs/render-deployment.md.
 #

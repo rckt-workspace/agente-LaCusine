@@ -1,4 +1,6 @@
-# Despliegue en Render — preparación (no desplegado)
+# Despliegue en Render — DESCARTADO (registro histórico)
+
+> **Estado: descartado.** RCKT suspendió Render como destino de despliegue. Este documento se conserva solo como registro de la decisión anterior. La arquitectura vigente es Docker portable, Supabase licenciado y AWS (ver [aws-architecture.md](aws-architecture.md) y [local-development.md](local-development.md)).
 
 Estado: **preparado, no ejecutado.** El archivo [`render.yaml`](../render.yaml) describe los servicios, pero no crea nada hasta que el equipo lo use desde el panel de Render con autorización expresa.
 

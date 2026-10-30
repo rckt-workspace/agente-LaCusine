@@ -124,3 +124,17 @@ Si una variable no está definida, el sistema se comporta así:
 - Un secreto en el repositorio, en un `render.yaml` con valor literal, en un log o en una respuesta HTTP.
 - Un `.env` real en un commit, una imagen o un PR.
 - La URL de PostgreSQL con contraseña impresa en un log. El código solo registra nombres de variables y códigos de error.
+
+## Entorno local Docker y notificaciones (fase 6)
+
+| Variable | Obligatoria | Secreta | Descripción |
+|---|---|---|---|
+| `ADVISOR_NOTIFIER` | No | No | Canal de avisos a asesores. Hoy solo `simulated`. Cualquier otro valor impide arrancar el worker. |
+| `LACUSINE_API_PORT` | No | No | Puerto del host para la API en Compose (por defecto 18000). |
+| `LACUSINE_DB_OWNER_PASSWORD` | Sí (Compose) | Sí | Contraseña del propietario de la base local de desarrollo. Solo migraciones y creación de roles. |
+| `LACUSINE_DEV_APP_PASSWORD` | Sí (Compose) | Sí | Contraseña del rol `lacusine_app` local. |
+| `LACUSINE_DEV_ADMIN_PASSWORD` | Sí (Compose) | Sí | Contraseña del rol `lacusine_admin` local. |
+| `LACUSINE_LOCAL_APP_SECRET` | Sí (Compose) | Sí | Secreto de firma del webhook local. |
+| `LACUSINE_LOCAL_VERIFY_TOKEN` | Sí (Compose) | Sí | Token del handshake local. |
+
+Estas variables viven en `.env` local (ignorado por Git) o en el entorno del host. `docker-compose.yml` no contiene valores. La imagen no incluye `.env`.

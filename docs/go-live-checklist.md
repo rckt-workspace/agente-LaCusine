@@ -25,7 +25,7 @@ Estado actual: **todas las casillas de integración están abiertas.** Las de c�
 
 ## 3. Base de datos (Supabase)
 
-- [ ] Las migraciones 1 a 11 se aplicaron en un proyecto de prueba aislado sin errores.
+- [ ] Las migraciones 1 a 13 se aplicaron en un proyecto de prueba aislado sin errores, con `python -m app.db.migrate`.
 - [ ] Roles de login creados fuera del repositorio y asociados a `lacusine_backend` y `lacusine_admin_ops`. Ninguno es `SUPERUSER`, `BYPASSRLS` ni propietario del esquema.
 - [ ] La aplicación no se conecta como `postgres` ni con `service_role` (comprobar `DATABASE_URL` y `LACUSINE_ADMIN_DATABASE_URL` en el panel).
 - [ ] Permisos verificados con conexiones reales de cada rol en el proyecto de prueba: denegaciones de `anon`, `authenticated` y de la auditoría.
@@ -33,7 +33,7 @@ Estado actual: **todas las casillas de integración están abiertas.** Las de c�
 - [ ] Rol del backend creado con mínimo privilegio y verificado.
 - [ ] RLS activa en todas las tablas; `anon` y `authenticated` sin privilegios (verificado con consultas de solo lectura).
 - [ ] Cadena de conexión elegida según [supabase-deployment.md](supabase-deployment.md), con SSL.
-- [ ] `/ready` responde 200 desde Render.
+- [ ] `/ready` responde 200 desde la plataforma de destino (AWS; Render queda descartado).
 
 ## 4. Meta y WhatsApp
 
@@ -68,6 +68,7 @@ Estado actual: **todas las casillas de integración están abiertas.** Las de c�
 ## Qué no cubre esta lista
 
 - Validación jurídica de las políticas comerciales. Corresponde a LCI.
-- Costos reales de Meta, Anthropic, Supabase y Render. Verificar en sus páginas de precios.
+- Costos reales de Meta, Anthropic, Supabase y AWS. Verificar en sus páginas de precios.
+- Elección final de plataforma (EC2 o ECS): ver [aws-architecture.md](aws-architecture.md).
 - Pruebas de carga a volumen de producción.
 - Cumplimiento de protección de datos más allá de la retención y los accesos descritos en el repositorio.

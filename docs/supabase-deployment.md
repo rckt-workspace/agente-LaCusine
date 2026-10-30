@@ -19,6 +19,8 @@ Las migraciones son incrementales y se aplican **en este orden exacto**. Cada ar
 | 9 | `20261030100000_whatsapp_delivery.sql` | 5 | Estados de entrega, lease de envío, eventos de estado |
 | 10 | `20261031100000_phase_5_1_hardening.sql` | 5.1 | Marca de ventana confiable, tipo de salida (`reply`/`handoff_notice`), línea de negocio en salidas, precio confirmado y `admin_audit_log` |
 | 11 | `20261101100000_app_roles_rls_policies.sql` | 5.1 (revisión final) | Roles de grupo sin login (`lacusine_backend`, `lacusine_admin_ops`), privilegios por tabla y políticas RLS solo para esos grupos |
+| 12 | `20261102100000_phase_6_local_completion.sql` | 6 | Atribución de anuncios en `leads`, cola `advisor_notifications` con RLS |
+| 13 | `20261103100000_admin_notification_visibility.sql` | 6 | Lectura de avisos para el rol administrativo (solo `select`) |
 
 La migración 3 queda reemplazada en efecto por la 8. Ninguna se edita: el historial se conserva.
 
@@ -105,14 +107,14 @@ Los modos siguientes provienen de la documentación oficial de Supabase; **verif
 
 ## Procedimiento de aplicación (cuando haya autorización)
 
-1. Crear un proyecto Supabase de **prueba** aislado y aplicar las 11 migraciones en orden.
+1. Crear un proyecto Supabase de **prueba** aislado y aplicar las 13 migraciones en orden.
 2. Las pruebas destructivas **nunca** se ejecutan contra Supabase: el guard rechaza hosts de Supabase y exige una base de loopback. La verificación en la nube se limita a `/ready` y consultas de solo lectura.
 3. Crear el rol del backend y verificar que no puede leer `auth` ni escribir fuera de las tablas.
 4. Crear, si se usará la CLI de conciliación, un rol administrativo **distinto**: `select` e `insert` sobre `admin_audit_log`, y `update` solo sobre las tablas que la CLI modifica. Nunca `delete` ni `truncate` sobre la auditoría. Su conexión va en `LACUSINE_ADMIN_DATABASE_URL`.
 5. Aplicar en producción en una ventana acordada, con respaldo confirmado, registrando el resultado de cada archivo.
 6. Verificar RLS (`relrowsecurity = true`) y privilegios de `anon` y `authenticated` (`has_table_privilege` debe ser falso).
 
-Las migraciones deben aplicarse en el orden de la tabla (1 a 11). Cada archivo es transaccional; un fallo a mitad de la secuencia deja las anteriores aplicadas y la siguiente sin ejecutar.
+Las migraciones deben aplicarse en el orden de la tabla (1 a 13). Cada archivo es transaccional; un fallo a mitad de la secuencia deja las anteriores aplicadas y la siguiente sin ejecutar.
 
 ## Qué no se ha hecho
 
@@ -120,3 +122,15 @@ Las migraciones deben aplicarse en el orden de la tabla (1 a 11). Cada archivo e
 - Ningún rol creado.
 - Ninguna contraseña generada ni guardada.
 - Ningún job de retención programado.
+
+## Modo B: local conectado a Supabase licenciado (pendiente de licencia)
+
+Estado: **no ejecutado.** No se ha conectado nada a Supabase Cloud. Este procedimiento es para cuando exista el proyecto y se autorice.
+
+1. Aplicar las migraciones con el rol propietario, desde una sesión local, **sin guardar la URL en el repositorio ni en el historial compartido**. Primero el ensayo, después la aplicación: `python -m app.db.migrate --dir supabase/migrations` (lista lo pendiente) y luego `... --apply`. La herramienta verifica el hash de cada migración ya aplicada y se detiene si alguna cambió.
+2. Crear los roles de login **a mano**, con las sentencias de la sección de roles de este documento. `app.db.dev_roles` no sirve aquí: se niega por diseño a ejecutarse contra un host que no sea local.
+3. `DATABASE_URL` de la API y del worker: el rol `lacusine_app`, con `sslmode=require` y la cadena de sesión del pooler (5432) o la conexión directa.
+4. Repetir la comprobación de RLS y privilegios con conexiones reales de cada rol.
+5. Solo después, activar `WORKER_ENABLED=true` en la base de prueba de Supabase, con los simuladores.
+
+Lo que **no** queda probado todavía: el pooler en modo transacción (6543), los privilegios por defecto de Supabase y la latencia real. Ver [auditoria-fase-5-1.md](auditoria-fase-5-1.md).

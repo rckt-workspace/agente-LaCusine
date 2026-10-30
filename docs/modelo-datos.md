@@ -125,3 +125,9 @@ Recomendaciones operativas:
 - Crear el rol de base de datos del backend y su política de contraseñas (fuera del repositorio).
 - Envío de las respuestas `pending` por WhatsApp Cloud API: implementado, desactivado por defecto (Fase 5). Ver [whatsapp-integration.md](whatsapp-integration.md).
 - Importar el catálogo real cuando LCA entregue la fuente aprobada; el importador ya valida el contrato y no inventa registros.
+
+## Fase 6 (migraciones 12 y 13)
+
+- **`leads`** — `referral_source_type`, `referral_source_id`, `referral_source_url`, `referral_ctwa_clid`, `referral_captured_at`. Solo se guardan los campos que Meta envía en el objeto `referral`, con longitud acotada. Solo el primer contacto escribe; los siguientes no sobrescriben. Restricción: la marca de captura existe si y solo si hay algún campo.
+- **`advisor_notifications`** — una fila por solicitud de asesor (`handoff_id` único). `status`: `pending`, `sending`, `sent`, `failed`. Lease con `lease_token` y `lease_expires_at`. Sin datos personales. Solo `select`, `insert` y `update` para el backend; solo `select` para la administración.
+- **`schema_migrations`** — registro de migraciones aplicadas por la herramienta. Lo crea la propia herramienta, no una migración numerada.

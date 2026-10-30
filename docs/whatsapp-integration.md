@@ -107,7 +107,8 @@ Verificar contra la documentación vigente antes de la puesta en marcha.
 
 ## Atribución de anuncios de Meta Ads
 
-- **No implementado.** Hoy no se persiste la referencia de anuncio que Meta pueda entregar en el mensaje entrante.
+- **Implementado (fase 6).** Si el primer mensaje trae el objeto `referral` de Meta, se guardan `source_type`, `source_id`, `source_url` y `ctwa_clid`, con longitud acotada. Solo en el primer contacto. Campos no documentados se descartan. Si no hay objeto, no hay atribución: nunca se inventa.
+- La Marketing API no se consulta. Ninguna campaña real se ha verificado.
 - Cuando se implemente, debe guardarse solo lo que Meta entregue, sin suponer que todas las conversaciones tienen las mismas condiciones de mensajería o facturación.
 
 ## Diagnóstico de coexistencia y del número actual
@@ -138,3 +139,13 @@ Preguntas que deben responderse con evidencia (panel de Meta Business Manager y 
 - Recepción de estados con mayor cobertura de campos (`conversation`, `pricing`).
 - Prueba con un número de prueba de Meta, autorizada por el responsable de la cuenta.
 - Adaptador de envío en el despliegue de Render, con `META_SEND_ENABLED` activado solo en la fase de salida.
+
+## Avisos a asesores (fase 6)
+
+- Cada transferencia genera un aviso interno. Hoy se entrega por un canal **simulado**: no sale ningún correo ni mensaje.
+- El aviso lleva solo identificadores, motivo y prioridad.
+- Un canal real exige decisión sobre el destinatario, el medio y el contenido permitido. Hasta entonces, `ADVISOR_NOTIFIER` solo admite `simulated`.
+
+## Plantillas
+
+No hay plantillas implementadas. Ningún caso de uso aprobado las requiere todavía. Fuera de la ventana de 24 horas, las respuestas quedan bloqueadas.

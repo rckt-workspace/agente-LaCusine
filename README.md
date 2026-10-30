@@ -15,7 +15,7 @@ Documentación: [`docs/arquitectura.html`](docs/arquitectura.html) · [`docs/mod
 | 3 | Motor comercial de IA, búsqueda de productos, adaptador Anthropic, control de costos, importador XLSX | Implementada y probada con proveedor simulado. **Sin llamadas reales.** |
 | 4 | Worker y cola persistente, outbox de respuestas, reservas presupuestarias, transferencias y retención segura | Implementada y probada contra PostgreSQL local. Sin envío. Detalle en [docs/worker.md](docs/worker.md). |
 | 5 | Adaptador WhatsApp Cloud API, dispatcher de salidas, estados de entrega y ventana de 24 h | Implementada y probada con transporte simulado. **Envío real desactivado.** Ver [whatsapp-integration.md](docs/whatsapp-integration.md). |
-| 6 | Despliegue en Render, proyecto Supabase real, piloto controlado | Preparado (`render.yaml`, guías). **Sin desplegar. Requiere autorización explícita.** Ver [go-live-checklist.md](docs/go-live-checklist.md). |
+| 6 | Entorno local en Docker, Supabase licenciado, AWS y piloto controlado | Local completo en Docker. Render descartado. **Sin desplegar. Requiere autorización explícita.** Ver [go-live-checklist.md](docs/go-live-checklist.md). |
 
 ## Worker y procesamiento confiable (Fase 4)
 
@@ -144,7 +144,7 @@ Dependencias de ejecución: `fastapi 0.141.1`, `uvicorn 0.52.3`, `psycopg 3.3.6`
 .venv\Scripts\python.exe -m pytest -q tests --ignore=tests/integration
 ```
 
-→ 512 pasan (1 opcional omitido: catálogo real).
+→ 531 pasan (1 opcional omitido: catálogo real).
 
 **Integración** (PostgreSQL real, base desechable local):
 
@@ -156,7 +156,7 @@ $env:TEST_DATABASE_URL = "postgresql://postgres:<contraseña-local>@127.0.0.1:55
 .venv\Scripts\python.exe -m pytest -q tests/integration
 ```
 
-→ 116 pasan (fases 2 a 5.1; incluye dos procesos independientes sobre la misma cola y roles de mínimo privilegio con RLS).
+→ 128 pasan (fases 2 a 6; incluye dos procesos independientes, roles RLS, E2E con referral, notificaciones y migraciones).
 
 ### Guard de las pruebas destructivas
 
@@ -171,7 +171,7 @@ Las pruebas de integración reinician el esquema `public`. Por eso exigen **toda
 
 Si `TEST_DATABASE_URL` está definida pero es insegura, el módulo **falla**; no se omite. Las pruebas del guard son unitarias y nunca se conectan a ninguna base.
 
-**Todas:** `python -m pytest -q` → 628 pasan con la base de pruebas (512 unitarias + 116 de integración) y 1 se omite (prueba opcional del catálogo real). Sin base de datos: 512 pasan y 8 se omiten, cada una con su motivo (7 módulos de integración y la prueba opcional).
+**Todas:** `python -m pytest -q` → 659 pasan con la base de pruebas (531 unitarias + 128 de integración) y 1 se omite (prueba opcional del catálogo real). Sin base de datos: 531 pasan y 9 se omiten, cada una con su motivo (7 módulos de integración y la prueba opcional).
 
 Las pruebas que dependen de la base de datos exigen `TEST_DATABASE_URL`; la contraseña del contenedor se pasa solo por variable de entorno del proceso y nunca se escribe en el repositorio.
 
@@ -181,10 +181,18 @@ Las pruebas que dependen de la base de datos exigen `TEST_DATABASE_URL`; la cont
 
 - **Envío:** `WHATSAPP_DRY_RUN=true` y `META_SEND_ENABLED=false` por defecto. Con ambos desactivados no sale ninguna solicitud a Meta.
 - **Configuración local:** copie `.env.example` a `.env` y active `LACUSINE_LOAD_DOTENV=true` solo en su máquina. Render no usa `.env`.
-- **Despliegue:** `render.yaml` describe el Web Service y el Background Worker. Auto-deploy desactivado. Ver [render-deployment.md](docs/render-deployment.md).
-- **Base de datos:** once migraciones en orden (la 10 es de la fase 5.1 y la 11 añade roles de mínimo privilegio con RLS), sin aplicar a Supabase Cloud. Ver [supabase-deployment.md](docs/supabase-deployment.md).
+- **Despliegue:** Render queda descartado (ver [render-deployment.md](docs/render-deployment.md)). La arquitectura futura es AWS, sin recursos creados: [aws-architecture.md](docs/aws-architecture.md). Entorno local: [local-development.md](docs/local-development.md).
+- **Base de datos:** trece migraciones en orden (la 11 añade roles de mínimo privilegio con RLS; la 12, atribución de anuncios y avisos a asesores; la 13, lectura de avisos para la administración), sin aplicar a Supabase Cloud. Ver [supabase-deployment.md](docs/supabase-deployment.md).
 - **Variables:** ver [environment-variables.md](docs/environment-variables.md).
 - **Puerta de salida:** ver [go-live-checklist.md](docs/go-live-checklist.md). Ninguna casilla de producción está marcada.
+
+## Estado actual (Fase 6, cierre local)
+
+- **Entorno local completo en Docker:** PostgreSQL 16, migraciones explícitas, roles de mínimo privilegio, API y worker. Guía: [local-development.md](docs/local-development.md).
+- **Atribución de anuncios:** captura el objeto `referral` de Meta, solo en el primer contacto, sin inventar datos.
+- **Avisos a asesores:** cada transferencia encola un aviso en su misma transacción. Entrega por un canal simulado (`ADVISOR_NOTIFIER=simulated`); ningún canal real.
+- **Migraciones:** herramienta explícita (`python -m app.db.migrate`). Nunca la ejecutan la API ni el worker.
+- **Pendiente:** Supabase licenciado, AWS y el piloto. Ver [aws-architecture.md](docs/aws-architecture.md) y [operacion-piloto.md](docs/operacion-piloto.md).
 
 ## Estabilización previa al piloto (fase 5.1)
 
@@ -205,7 +213,7 @@ Las pruebas que dependen de la base de datos exigen `TEST_DATABASE_URL`; la cont
 - **Notificación a asesores** (correo, WhatsApp o Teams): hoy solo se registra la solicitud.
 - **Importar el catálogo a Supabase**: requiere la aprobación de LCA y el procedimiento de [catalogo-operacion.md](docs/catalogo-operacion.md).
 - **Varias líneas de negocio:** requiere cambiar el esquema de leads (ver [whatsapp-integration.md](docs/whatsapp-integration.md)).
-- **Despliegue en Render** (API y worker como servicios separados): requiere autorización.
+- **Despliegue en AWS** (EC2 o ECS, decisión pendiente de créditos y presupuesto): requiere autorización. Supabase licenciado: requiere licencia y proyecto.
 - **Validación legal** de las políticas marcadas como pendientes (garantías de accesorios, devoluciones en promoción, 25 % de gasto administrativo).
 - **Precios de Meta, Anthropic y Supabase**: verificar antes de presupuestar. Las tarifas de Anthropic usadas como referencia se verificaron el 28/10/2026 y no están en el código.
 
