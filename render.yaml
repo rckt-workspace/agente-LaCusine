@@ -28,6 +28,8 @@ services:
         value: "true"
       - key: DEMO_TOKEN
         sync: false
+      - key: DEMO_PUBLIC_ORIGIN
+        sync: false  # https://<servicio>.onrender.com, conocido tras crear el servicio
       - key: DATABASE_URL
         sync: false
       - key: META_APP_SECRET
