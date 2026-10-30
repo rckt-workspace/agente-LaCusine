@@ -246,7 +246,8 @@ def test_admin_role_reads_resolves_and_audits_through_the_service():
     pool.open(wait=True, timeout=10)
     try:
         service = AdminService(pool, AdminContext(operator="operador-de-prueba", environment="test"))
-        assert isinstance(service.counts(), dict)
+        counts = service.counts()
+        assert "advisor_notifications" in counts  # el rol administrativo puede leer el estado de los avisos
         service.resume_conversation(conv, reason="reactivación de prueba con rol administrativo")
         trail = service.audit_trail("conversation", conv)
         assert [row["action"] for row in trail] == ["resume_automation"]
