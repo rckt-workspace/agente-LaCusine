@@ -118,3 +118,10 @@ def test_commercial_spreadsheets_and_pdfs_are_ignored_by_git():
     for name in ["catalogo.xlsx", "catalogo.xls", "lista.pdf", "precios.csv"]:
         result = subprocess.run(["git", "check-ignore", "-q", name], cwd=ROOT, capture_output=True)
         assert result.returncode == 0, f"{name} no está ignorado por Git"
+
+
+def test_both_render_services_declare_the_business_line():
+    # Sin META_PHONE_NUMBER_ID en el web, el webhook almacena eventos de otras líneas antes de descartarlos.
+    web, worker = _render_services()
+    for block in (web, worker):
+        assert re.search(r"- key: META_PHONE_NUMBER_ID\n\s+sync: false", block)
