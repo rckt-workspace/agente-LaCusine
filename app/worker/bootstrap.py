@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+import uuid
 
 from app.agent.factory import build_commercial_agent
 from app.core.config import Settings
@@ -19,6 +20,11 @@ from app.repositories.crm import (
 from app.integrations.whatsapp_client import CloudApiSender
 from app.repositories.jobs import JobRepository
 from app.repositories.outbound import OutboundRepository
+from app.services.advisor_notifications import (
+    AdvisorNotificationDispatcher,
+    PostgresAdvisorNotificationRepository,
+    SimulatedAdvisorNotifier,
+)
 from app.worker.dispatcher import OutboxDispatcher
 from app.repositories.llm_usage import PostgresUsageStore
 from app.repositories.outbox import OutboxRepository
@@ -29,7 +35,7 @@ from app.worker.runner import Worker
 
 
 def build_worker(settings: Settings, worker_settings: WorkerSettings, stop_event: threading.Event | None = None,
-                 sender=None):
+                 sender=None, advisor_notifier=None):
     """Devuelve (worker, pool). El llamador abre y cierra el pool.
 
     `sender` solo lo usan las pruebas (simulador). En producción se usa el adaptador configurado.
@@ -91,4 +97,15 @@ def build_worker(settings: Settings, worker_settings: WorkerSettings, stop_event
         backoff_max_seconds=worker_settings.backoff_max_seconds,
         batch_size=worker_settings.batch_size,
     )
-    return Worker(worker_settings, jobs, processor, stop_event=stop_event, dispatcher=dispatcher), pool
+    if settings.advisor_notifier != "simulated" and advisor_notifier is None:
+        # Ningún canal real está implementado. Falla cerrado en lugar de caer en otro canal.
+        raise ValueError("advisor_notifier_unsupported")
+    notifications = AdvisorNotificationDispatcher(
+        PostgresAdvisorNotificationRepository(pool, max_attempts=worker_settings.max_attempts),
+        advisor_notifier or SimulatedAdvisorNotifier(),
+        owner_token_factory=uuid.uuid4,
+        lease_seconds=worker_settings.lease_seconds,
+        batch_size=worker_settings.batch_size,
+    )
+    return Worker(worker_settings, jobs, processor, stop_event=stop_event, dispatcher=dispatcher,
+                  notifications=notifications), pool

@@ -22,6 +22,7 @@ from typing import Callable
 from app.agent.orchestrator import AgentOutcome, OutcomeStatus
 from app.agent.safety import SAFE_REPLY_HUMAN
 from app.agent.schemas import LeadStage
+from app.models.referral import sanitize_referral
 from app.repositories.jobs import Claim
 from app.repositories.outbound import META_STATUSES
 from app.worker.errors import ManualReviewRequired, PermanentJobError
@@ -92,6 +93,9 @@ class EventProcessor:
         event_time, trusted = meta_event_time(claim.payload, now)
         lead_id = self._leads.get_or_create(contact)
         conversation_id = self._conversations.get_or_open(lead_id)
+        referral = sanitize_referral(claim.payload.get("referral"))
+        if referral is not None:
+            self._leads.capture_referral(lead_id, referral)
 
         if message_type != "text":
             self._messages.record_inbound(

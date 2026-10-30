@@ -54,6 +54,27 @@ class PostgresLeadRepository:
             raise StorageError("lead_not_found_after_upsert")
         return row[0]
 
+    def capture_referral(self, lead_id: UUID, referral: dict[str, str]) -> bool:
+        """Guarda la atribución de anuncio solo la primera vez (primer contacto). Devuelve True si se guardó.
+
+        Un mensaje posterior de otro anuncio no sobrescribe el origen comercial original.
+        """
+        try:
+            with self._pool.connection() as conn:
+                cursor = conn.execute(
+                    """
+                    update public.leads
+                    set referral_source_type = %s, referral_source_id = %s, referral_source_url = %s,
+                        referral_ctwa_clid = %s, referral_captured_at = now()
+                    where id = %s and referral_captured_at is null
+                    """,
+                    (referral.get("source_type"), referral.get("source_id"), referral.get("source_url"),
+                     referral.get("ctwa_clid"), lead_id),
+                )
+                return cursor.rowcount == 1
+        except (psycopg.Error, PoolClosed):
+            raise StorageError("referral_write_failed") from None
+
 
 class PostgresConversationRepository:
     def __init__(self, pool: ConnectionPool) -> None:
@@ -157,6 +178,16 @@ class PostgresHandoffRepository:
                         """,
                         (conversation_id,),
                     ).fetchone()
+                    if row is not None:
+                        # Misma transacción: una transferencia nunca existe sin su aviso encolado.
+                        conn.execute(
+                            """
+                            insert into public.advisor_notifications (handoff_id, conversation_id, reason, priority)
+                            values (%s, %s, %s, %s)
+                            on conflict (handoff_id) do nothing
+                            """,
+                            (row[0], conversation_id, reason, priority),
+                        )
                     conn.execute(
                         """
                         update public.conversations

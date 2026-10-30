@@ -87,6 +87,7 @@ class Settings:
     anthropic_max_concurrency: int = 2
     anthropic_prompt_caching: bool = False
     agent_kill_switch: bool = False
+    advisor_notifier: str = "simulated"  # único canal disponible hoy; cualquier otro valor falla al arrancar
     agent_max_input_chars: int = 1000
     agent_max_context_chars: int = 3000
 
@@ -128,6 +129,7 @@ class Settings:
             anthropic_max_concurrency=_int("ANTHROPIC_MAX_CONCURRENCY", 2),
             anthropic_prompt_caching=_bool("ANTHROPIC_PROMPT_CACHING", False),
             agent_kill_switch=_bool("AGENT_KILL_SWITCH", False),
+            advisor_notifier=(os.environ.get("ADVISOR_NOTIFIER") or "simulated").strip().lower(),
             agent_max_input_chars=_int("AGENT_MAX_INPUT_CHARS", 1000),
             agent_max_context_chars=_int("AGENT_MAX_CONTEXT_CHARS", 3000),
             price_input_usd_per_mtok=_decimal("ANTHROPIC_PRICE_INPUT_USD_PER_MTOK"),

@@ -33,6 +33,11 @@ class FakeLeads:
         self.created: list[str] = []
         self.id = uuid.uuid4()
 
+    def capture_referral(self, lead_id, referral):
+        self.referrals = getattr(self, "referrals", [])
+        self.referrals.append((lead_id, referral))
+        return True
+
     def get_or_create(self, wa_id):
         self.created.append(wa_id)
         return self.id
