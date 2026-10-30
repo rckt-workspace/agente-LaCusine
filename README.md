@@ -192,6 +192,8 @@ Las pruebas que dependen de la base de datos exigen `TEST_DATABASE_URL`; la cont
 - **Atribución de anuncios:** captura el objeto `referral` de Meta, solo en el primer contacto, sin inventar datos.
 - **Avisos a asesores:** cada transferencia encola un aviso en su misma transacción. Entrega por un canal simulado (`ADVISOR_NOTIFIER=simulated`); ningún canal real.
 - **Migraciones:** herramienta explícita (`python -m app.db.migrate`). Nunca la ejecutan la API ni el worker.
+- **Modos de ejecución:** una sola imagen con `APP_RUN_MODE`: `web`, `worker` o `demo-combined` (demostración).
+- **Demostración en Render Free:** un único Web Service, con `/demo` protegido por token y datos sintéticos. Preparada, no desplegada: [render-free-demo.md](docs/render-free-demo.md).
 - **Pendiente:** Supabase licenciado, AWS y el piloto. Ver [aws-architecture.md](docs/aws-architecture.md) y [operacion-piloto.md](docs/operacion-piloto.md).
 
 ## Estabilización previa al piloto (fase 5.1)

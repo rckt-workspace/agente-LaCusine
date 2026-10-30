@@ -103,3 +103,19 @@ La elección definitiva queda pendiente de:
 - Medición real de volumen en el piloto.
 
 Ninguna acción de esta sección ha consumido créditos ni creado recursos.
+
+## Despliegue por servicio con la misma imagen (estado: preparado, sin recursos)
+
+Un contenedor por proceso. Misma imagen, distinto `APP_RUN_MODE`:
+
+| Servicio | `APP_RUN_MODE` | Comando efectivo | Health check | Parada |
+|---|---|---|---|---|
+| API | `web` | `uvicorn app.main:app --host 0.0.0.0 --port $PORT` | `GET /health` | SIGTERM; 20 s de gracia |
+| Worker | `worker` | `python -m app.worker.main` | No aplica (no expone HTTP) | SIGTERM; 30 s de gracia |
+
+- **ECS/Fargate:** dos servicios con dos definiciones de tarea que referencian la misma imagen de ECR. Variables sensibles desde Secrets Manager o SSM Parameter Store. Logs a CloudWatch Logs. Rol de tarea con el mínimo permiso. Escalado independiente: la API puede escalar por tráfico; el worker, de momento, con una sola instancia activa hasta validar la concurrencia del lease.
+- **EC2 con Docker:** dos contenedores con la misma imagen y los mismos comandos que en Compose. Sin archivo de Compose para AWS todavía: se redactará cuando se autorice.
+- **Migraciones:** nunca en el arranque de ningún servicio. Se aplican con `python -m app.db.migrate` como paso explícito y controlado.
+- **Demostración:** `demo-combined` no se usa en AWS. Solo Render Free.
+
+Nada de esto se ha desplegado. No hay recursos creados ni créditos consumidos.

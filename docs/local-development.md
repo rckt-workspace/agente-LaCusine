@@ -109,3 +109,17 @@ docker compose down -v       # elimina también la base local. Irreversible.
 | `migrate` sale con error `migration_modified_after_apply` | Un archivo de `supabase/migrations` cambió después de aplicarse | No reescribir el historial. Crear una migración nueva |
 | `dev-roles` sale con `dev_roles_*_refused` | El host o el nombre de la base no son locales | Revisar `DATABASE_URL` en `docker-compose.yml` |
 | `api` no llega a healthy | Revisar `docker compose logs api` | Los logs no contienen secretos ni contenido de clientes |
+
+## Modos de ejecución de la misma imagen
+
+La imagen es única. La variable `APP_RUN_MODE` decide qué arranca:
+
+| Modo | Qué arranca | Uso |
+|---|---|---|
+| `web` (defecto) | Solo FastAPI en `$PORT` (8000 por defecto) | Compose local y AWS (un contenedor por proceso) |
+| `worker` | Solo el worker | Compose local y AWS |
+| `demo-combined` | FastAPI y worker supervisados en un mismo contenedor. Exige `DEMO_ENABLED=true` | Render Free (demostración) |
+
+Probado en esta máquina: `web` (health 200, ready 503 sin base, demo oculta, parada limpia con código 0); `worker` en espera y consumiendo, con parada por SIGTERM con código 0; `demo-combined` bajo `--memory=512m --cpus=0.1`, con flujo funcional completo por HTTP, detección de la muerte inesperada de un hijo (el contenedor sale con código distinto de 0) y parada por SIGTERM con código 0. Detalles en [render-free-demo.md](render-free-demo.md).
+
+Ejecutar `demo-combined` en Compose junto al worker de Compose duplica consumidores de la misma cola: detener antes el servicio `worker` de Compose.

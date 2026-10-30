@@ -138,3 +138,14 @@ Si una variable no está definida, el sistema se comporta así:
 | `LACUSINE_LOCAL_VERIFY_TOKEN` | Sí (Compose) | Sí | Token del handshake local. |
 
 Estas variables viven en `.env` local (ignorado por Git) o en el entorno del host. `docker-compose.yml` no contiene valores. La imagen no incluye `.env`.
+
+## Modo de ejecución y demostración (fase 6, cierre)
+
+| Variable | Obligatoria | Secreta | Descripción |
+|---|---|---|---|
+| `APP_RUN_MODE` | No (`web`) | No | `web`, `worker` o `demo-combined`. Cualquier otro valor impide arrancar. |
+| `PORT` | No (`8000`) | No | Puerto de la API. Render lo asigna. Debe estar entre 1 y 65535. |
+| `DEMO_ENABLED` | No (`false`) | No | Activa `/demo`. Solo en el destino de demostración. Con `demo-combined` es obligatoria. |
+| `DEMO_TOKEN` | Si la demo está activa | Sí | Token de acceso a `/demo`. Nunca en el repositorio. |
+
+La demo arranca solo si además hay base de datos, línea de negocio y `META_SEND_ENABLED=false`. Si falta cualquiera, el proceso falla al arrancar.

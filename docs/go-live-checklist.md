@@ -72,3 +72,19 @@ Estado actual: **todas las casillas de integración están abiertas.** Las de c�
 - Elección final de plataforma (EC2 o ECS): ver [aws-architecture.md](aws-architecture.md).
 - Pruebas de carga a volumen de producción.
 - Cumplimiento de protección de datos más allá de la retención y los accesos descritos en el repositorio.
+
+## 7. Demostración en Render Free (solo destino de demostración)
+
+- [ ] Un único Web Service Docker, plan Free, auto-deploy desactivado, sin worker adicional.
+- [ ] Variables de Render Environment definidas en el panel; ningún valor en el repositorio.
+- [ ] `DEMO_ENABLED=true` solo en este servicio; `META_SEND_ENABLED=false`, `WHATSAPP_DRY_RUN=true`, `ANTHROPIC_ENABLED=false`, `AGENT_DRY_RUN=true`.
+- [ ] Base de demostración aislada, con migraciones 1 a 13 y roles de mínimo privilegio. Sin datos reales.
+- [ ] Token de `/demo` generado fuera del repositorio y revocable.
+- [ ] Limitaciones de suspensión comunicadas: no hay atención 24/7 ni procesamiento continuo.
+
+## 8. AWS (pendiente de créditos y autorización)
+
+- [ ] Elección EC2 o ECS registrada en [aws-architecture.md](aws-architecture.md), con el presupuesto autorizado.
+- [ ] Dos servicios con la misma imagen: API (`APP_RUN_MODE=web`) y worker (`APP_RUN_MODE=worker`).
+- [ ] Secretos en Secrets Manager o SSM; logs en CloudWatch; rol de mínimo privilegio.
+- [ ] Migraciones aplicadas como paso explícito, nunca en el arranque.

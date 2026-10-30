@@ -1,6 +1,8 @@
-# Despliegue en Render — DESCARTADO (registro histórico)
+# Despliegue en Render — destino de DEMOSTRACIÓN (Render Free)
 
-> **Estado: descartado.** RCKT suspendió Render como destino de despliegue. Este documento se conserva solo como registro de la decisión anterior. La arquitectura vigente es Docker portable, Supabase licenciado y AWS (ver [aws-architecture.md](aws-architecture.md) y [local-development.md](local-development.md)).
+> **Estado: preparado, no desplegado.** Render vuelve a ser destino **solo para demostración**, en plan Free y con **un único Web Service Docker** que ejecuta API y worker (`APP_RUN_MODE=demo-combined`). No es producción. Procedimiento completo, límites de suspensión y medición en [render-free-demo.md](render-free-demo.md).
+>
+> **Superado:** las secciones de abajo que describen dos servicios (API y worker) y el plan `starter` ya no corresponden al `render.yaml` actual. Se conservan como referencia de la alternativa empresarial descartada.
 
 Estado: **preparado, no ejecutado.** El archivo [`render.yaml`](../render.yaml) describe los servicios, pero no crea nada hasta que el equipo lo use desde el panel de Render con autorización expresa.
 
