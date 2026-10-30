@@ -11,8 +11,8 @@ respuesta generada (outbound_messages: pending)
   -> ventana de 24 h cerrada -> blocked
   -> WhatsAppSender.send_text -> POST https://graph.facebook.com/{versión}/{PHONE_NUMBER_ID}/messages
        -> 200/201 con identificador  -> sent (wamid guardado)
-       -> rechazo previo a la aceptación (4xx, 429, red) -> pending (reintento) o failed
-       -> resultado incierto (timeout de lectura, 5xx, respuesta sin identificador) -> uncertain
+       -> rechazo previo a la aceptación (4xx, 429, conexión no establecida) -> pending (reintento) o failed
+       -> resultado incierto (timeout tras enviar, corte o error de lectura, 5xx, respuesta sin identificador) -> uncertain
   -> webhook de estado (statuses) -> sent | delivered | read | failed, sin retroceder
 ```
 
@@ -70,7 +70,11 @@ Verificar contra la documentación vigente antes de la puesta en marcha.
 - Un mensaje libre (texto) solo se envía si el cliente escribió en las últimas 24 horas. La ventana se abre con cada mensaje entrante del cliente.
 - Fuera de la ventana: el envío queda `blocked` con `outside_service_window`. **No se envía automáticamente** ningún mensaje libre ni plantilla.
 - Una conversación iniciada por la empresa (sin mensaje previo del cliente) queda bloqueada.
-- El límite se mide con el momento de recepción del mensaje entrante registrado en la base.
+- **El límite se mide con la hora del mensaje que da Meta** (`timestamp`), no con la hora de procesamiento ni de recepción. Una cola detenida durante horas no reinicia ni extiende la ventana.
+- La hora de Meta se acepta solo si es numérica, no anterior a 2020-01-01 (UTC) y no más de 5 minutos en el futuro. Si falta o no es válida, el mensaje se guarda pero **no abre la ventana** (`window_trusted = false`).
+- Un mensaje antiguo procesado después de uno más reciente no reduce la ventana: se toma el máximo de los mensajes de confianza.
+- Duplicados del mismo webhook no cambian la ventana.
+- Unidad de `timestamp`: segundos Unix, según la inferencia de la documentación. **Verificar con un mensaje real de prueba antes de la salida.**
 
 ### Plantillas
 
@@ -80,9 +84,19 @@ Verificar contra la documentación vigente antes de la puesta en marcha.
 
 ## Control humano
 
-- Antes de cada envío se lee el estado de automatización de la conversación. Si un asesor la controla (`paused_for_human` o `disabled`), la respuesta pendiente se **cancela** y no se envía.
-- Una respuesta de IA generada antes de la intervención humana no se envía después de ella.
-- Para retomar la automatización: un asesor la devuelve al estado `automated` desde la base, con autorización. No hay un mecanismo automático de retorno en esta fase.
+- Abrir una transferencia es una sola transacción: pausa la automatización (`paused_for_human`), cancela las respuestas de IA pendientes y registra la solicitud. Si cualquier paso falla, no queda nada aplicado a medias (prueba de rollback).
+- Abrir la misma transferencia varias veces, o desde dos procesos a la vez, produce una sola solicitud activa.
+- Antes de cada envío se lee el estado. Si un asesor controla la conversación, la respuesta de IA pendiente se **cancela**.
+- **Confirmación única al cliente:** se envía un texto fijo (`handoff_notice`), que no proviene del modelo. Es la única salida que se envía con la automatización pausada.
+- Un mensaje nuevo del cliente **no** reactiva la automatización, mientras haya una transferencia activa o la conversación esté pausada.
+- Reactivación: `python -m app.admin.cli ... resume-conversation`, solo si no hay transferencias activas. Queda en `admin_audit_log` con operador, motivo y fecha.
+
+## Línea de negocio
+
+- **MVP de una sola línea.** La línea se configura con `META_PHONE_NUMBER_ID`, y se correlaciona en cada evento, contacto, conversación y salida.
+- Un evento de otra línea: el webhook lo ignora cuando la línea está configurada; el procesador lo rechaza como error permanente. Nada se guarda en la conversación ajena.
+- Una salida de otra línea: el dispatcher la marca `failed` con `business_line_mismatch` y no la envía.
+- **Límite conocido:** `leads.wa_contact_id` es único en toda la base. Con dos líneas reales, el mismo número de cliente compartiría lead entre ambas. Soportar varias líneas exige cambiar el esquema (lead por línea). No se hizo porque el alcance es una línea.
 
 ## Destinatarios autorizados
 

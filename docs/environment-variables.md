@@ -27,7 +27,7 @@ Si una variable no está definida, el sistema se comporta así:
 | `AGENT_DRY_RUN` | `true` | El agente usa un proveedor simulado sin red ni costo. |
 | `ANTHROPIC_MODEL` | vacío | Sin modelo, Claude no puede llamarse aunque esté habilitado. |
 | `ANTHROPIC_*_USD_PER_MTOK` | vacío | Sin tarifas, cualquier llamada facturable queda bloqueada. |
-| `WORKER_ENABLED` | `false` | El worker sale sin consumir la cola. |
+| `WORKER_ENABLED` | `false` | El worker queda en espera sin consumir la cola ni salir. |
 | `AGENT_KILL_SWITCH` | `false` | Si se pone en `true`, el agente se desactiva de inmediato. |
 
 ## Categorías
@@ -80,7 +80,7 @@ Si una variable no está definida, el sistema se comporta así:
 
 | Variable | Secreta | Descripción |
 |---|---|---|
-| `WORKER_ENABLED` | No | `true` para consumir la cola. |
+| `WORKER_ENABLED` | No | `true` para consumir la cola. Con cualquier otro valor el proceso queda en espera. |
 | `WORKER_ID` | No | Identificador del proceso en los leases. Vacío = host y PID. |
 | `WORKER_POLL_INTERVAL_SECONDS` | No | Espera entre ciclos vacíos. Por defecto 5. |
 | `WORKER_BATCH_SIZE` | No | Mensajes por lote. Por defecto 10. |
@@ -99,12 +99,25 @@ Si una variable no está definida, el sistema se comporta así:
 | `TEST_DATABASE_URL` | Base local de loopback cuyo nombre sea `lacusine_test`. |
 | `LACUSINE_TEST_PG_PASSWORD` | Contraseña del contenedor de pruebas. Solo local. |
 
+### Administración (CLI de conciliación, solo local o con autorización)
+
+| Variable | Secreta | Descripción |
+|---|---|---|
+| `LACUSINE_ADMIN_DATABASE_URL` | Sí | Conexión con un rol de mínimo privilegio, distinta de `DATABASE_URL`. No se registra. |
+| `LACUSINE_ADMIN_ROLE` | No | Nombre del rol que debe coincidir con `current_user` antes de mutar. |
+| `LACUSINE_ADMIN_ENABLED` | No | `true` para permitir mutaciones. Por defecto desactivado: solo lectura. |
+| `LACUSINE_ENVIRONMENT` | No | Entorno declarado (`local`, `test`, `pilot`, `production`). Debe coincidir con `--environment`. |
+| `LACUSINE_ADMIN_ALLOW_REMOTE` | No | Permite un host de nube. Por defecto bloqueado. |
+| `LACUSINE_ADMIN_ALLOW_PRODUCTION` | No | Segunda confirmación obligatoria para producción. |
+
 ## Validación al arrancar
 
-- Un valor numérico inválido impide el arranque con un mensaje que nombra solo la variable.
+- Un valor numérico inválido impide el arranque con un mensaje que nombra solo la variable, **salvo** en modo espera del worker (ver `WORKER_ENABLED`).
+- Con `WORKER_ENABLED=true`, faltar `DATABASE_URL` o `META_PHONE_NUMBER_ID` impide el arranque con código 2. La línea de negocio es obligatoria para el worker: sin ella no puede aislar eventos.
 - Con envío activo y sin `META_ACCESS_TOKEN`, `META_PHONE_NUMBER_ID`, `META_GRAPH_API_VERSION` o destinatarios autorizados, el worker falla al construir el adaptador.
 - Un `META_PHONE_NUMBER_ID` con formato inválido también falla.
 - Ninguna variable de Meta es obligatoria para las pruebas locales simuladas.
+- Las pruebas de arranque (`tests/test_worker_process.py`) comprueban estos casos con el proceso real, sin variables reales.
 
 ## Qué no debe pasar
 

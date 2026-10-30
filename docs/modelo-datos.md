@@ -70,6 +70,13 @@ Restricción: `status = 'closed'` si y solo si `closed_at` tiene valor. Índice 
 
 **outbound_messages** — respuestas. `idempotency_key` única, `webhook_event_id` única por evento y `external_message_id` (wamid de Meta) única cuando existe. Estados: `pending` (generada), `sending` (reclamada con lease), `sent` (Meta aceptó), `delivered`, `read`, `failed`, `uncertain` (resultado incierto: nunca se reenvía sola), `blocked` (ventana cerrada) y `cancelled` (control humano). Restricción: `sending` tiene `lease_token`. Incluye `next_attempt_at`, `last_error_code` (solo código), `from_phone_id` y las marcas `sent_at`, `delivered_at`, `read_at`, `failed_at`.
 
+**Fase 5.1 (migración 10):**
+- `messages.window_trusted` — `true` solo si la hora del mensaje la dio Meta y es válida. Solo estos mensajes abren la ventana de 24 horas. Índice parcial por conversación.
+- `outbound_messages.kind` — `reply` (respuesta de IA) o `handoff_notice` (confirmación fija de transferencia). `handoff_notice` es la única salida que se envía con la automatización pausada.
+- `outbound_messages.business_phone_id` — línea de origen de cada salida. El dispatcher no envía si no coincide con la línea configurada.
+- `products.price_confirmed_at` — marca de cuándo se confirmó el precio. Restricción: un precio confirmado exige que haya precio. Es una marca, no un segundo precio: el precio de la importación sigue siendo de referencia hasta que una persona la confirme. Hoy no existe un flujo que establezca la marca; ese paso es manual.
+- `admin_audit_log` — operador, acción, tipo y referencia del objetivo, estado anterior y nuevo, motivo (3 a 500 caracteres) y referencia de evidencia. Sin texto del cliente ni secretos. Solo `select` e `insert`.
+
 **budget_reservations** — reserva por llamada facturable. `call_id` único. Estados `reserved`, `settled`, `released`, `uncertain`; `counted_usd` es lo que cuenta contra el presupuesto. Restricción: `released` implica `counted_usd = 0`.
 
 ## Decisiones de diseño

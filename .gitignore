@@ -15,3 +15,10 @@ __pycache__/
 .idea/
 .vscode/
 *.log
+
+# Catálogo y documentos comerciales originales: nunca versionar (fase 5.1)
+*.xlsx
+*.xls
+*.xlsm
+*.pdf
+*.csv

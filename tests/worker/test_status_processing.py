@@ -31,7 +31,7 @@ def _claim(payload):
 
 def _processor(outbound):
     return EventProcessor(agent=None, leads=None, conversations=None, messages=None, handoffs=None,
-                          outbox=None, retention_days=7, outbound=outbound)
+                          outbox=None, retention_days=7, outbound=outbound, expected_business_phone_id="1")
 
 
 def test_status_for_a_known_message_is_applied_and_processed():

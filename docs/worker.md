@@ -39,9 +39,40 @@ $env:DATABASE_URL = "postgresql://..."   # base LOCAL de prueba; nunca producci�
 .venv\Scripts\python.exe -m app.worker.main
 ```
 
-Sin `WORKER_ENABLED=true` el proceso informa `worker_disabled` y sale con código 0. Sin `DATABASE_URL` sale con código 2.
-
 Apagado: `Ctrl+C` o `SIGTERM` dejan de reclamar trabajos nuevos y esperan a los que están en curso. Los leases pendientes vencen solos si el proceso muere.
+
+## Ciclo de vida y modo espera (fase 5.1)
+
+| Estado del proceso | Cómo se produce | Consume la cola | Terminal |
+|---|---|---|---|
+| No creado | El servicio no existe en Render | No | — |
+| Detenido | El servicio está parado desde el panel | No | Sí |
+| En espera | `WORKER_ENABLED` distinto de `true` | **No** (no abre conexión a la base) | No; registra `worker_standby` cada 10 minutos |
+| Consumiendo | `WORKER_ENABLED=true` con la configuración completa | Sí | No |
+
+- **En espera no sale.** Un Background Worker que termina se reinicia en Render. Por eso el proceso permanece vivo sin tocar la base, y solo termina con `SIGTERM` o `Ctrl+C`.
+- Con `WORKER_ENABLED=true`, la configuración se valida antes de abrir el pool. Faltan `DATABASE_URL` o `META_PHONE_NUMBER_ID`, o un valor es inválido: el proceso sale con código 2 y no entra en bucle (el panel de Render lo mostrará como fallo de arranque).
+- Con `WORKER_ENABLED` distinto de `true`, ningún otro valor se valida. Así una variable numérica mal escrita no provoca reinicios mientras el worker está en espera.
+- Activar `WORKER_ENABLED=true` sobre una base real exige comprobar antes los efectos (ver [go-live-checklist.md](go-live-checklist.md)).
+
+Las pruebas de `tests/test_worker_process.py` ejecutan el proceso real: en espera sigue vivo sin consumir, con un valor numérico inválido sigue en espera, con `WORKER_ENABLED=true` sin base sale con código 2 y sin `META_PHONE_NUMBER_ID` también sale con código 2.
+
+## Reglas de la fase 5.1: transferencia, ventana y línea
+
+- **Transferencia atómica.** Abrir una transferencia pausa la automatización (`paused_for_human`), cancela las respuestas de IA pendientes y registra la solicitud, todo en una transacción. Abrir la misma transferencia dos veces, o desde dos procesos, produce una sola solicitud y una sola pausa.
+- **Una sola confirmación al cliente.** La confirmación de transferencia es un texto fijo (`handoff_notice`), no texto del modelo. Es la única salida que se envía con la automatización pausada, y sigue sujeta a la ventana de 24 horas.
+- **Reactivación solo auditada.** Un mensaje nuevo del cliente no reactiva la automatización. Solo `resume-conversation` de la CLI de administración la devuelve, y únicamente sin transferencias activas.
+- **Ventana de 24 horas con hora de Meta.** La hora del mensaje es el campo `timestamp` que envía Meta (segundos Unix, unidad inferida de la documentación). Se acepta si es numérica, no anterior a 2020 y no más de 5 minutos en el futuro. Un mensaje sin timestamp confiable se guarda, pero **nunca abre la ventana**. La hora de procesamiento solo sirve para ordenar; un evento atrasado no extiende la ventana.
+- **Una línea de negocio.** El MVP admite una sola línea (`META_PHONE_NUMBER_ID`). Eventos y salidas de otra línea se rechazan: el webhook los ignora y el procesador los marca como error permanente, y el dispatcher nunca envía desde una línea distinta de la que generó la salida.
+
+## Herramienta de conciliación
+
+`python -m app.admin.cli` resuelve casos que requieren una persona. Es una herramienta de línea de comandos, sin endpoints HTTP. Subcomandos: `status`, `inspect`, `audit`, `resolve-event`, `resolve-outbound`, `resolve-reservation`, `resolve-handoff`, `resume-conversation`.
+
+- Solo muta si se cumplen todas las guardas: rol propio de base de datos, entorno declarado y coincidente, host de nube bloqueado salvo permiso explícito, mutaciones habilitadas, identificador UUID y confirmación que repite ese identificador.
+- Ninguna resolución devuelve un envío a `pending` ni reenvía un mensaje. Un envío `uncertain` solo pasa a `sent` o `failed` con una referencia externa.
+- Cada decisión queda en `admin_audit_log` con operador, fecha, motivo y referencia de evidencia, en la misma transacción. No registra texto del cliente ni secretos.
+- Detalle de los estados permitidos y de las guardas: [auditoria-fase-5-1.md](auditoria-fase-5-1.md) y el código de `app/admin/policy.py`.
 
 ## Estados de un evento
 
@@ -149,7 +180,7 @@ Antes de desplegar se requiere: autorización, proyecto Supabase real con las mi
 
 1. **Presupuesto y auditoría en la misma base, no en la misma transacción que la llamada externa.** Un fallo entre la llamada y la liquidación deja la reserva en `reserved`, que se concilia a mano. No hay conciliación automática todavía.
 2. **Timeout de procesamiento.** No se pueden matar hilos de Python. `WORKER_PROCESSING_TIMEOUT_SECONDS` se aplica como advertencia (`job_slow`) y como límite del proveedor; si el proceso se queda colgado, el lease vence y el trabajo se recupera.
-3. **Un contacto con `manual_review` queda bloqueado.** Es intencional (no responder fuera de orden), pero requiere que una persona lo resuelva. No hay todavía una herramienta para resolver revisiones.
+3. **Un contacto con `manual_review` queda bloqueado.** Es intencional (no responder fuera de orden). La resolución se hace con la CLI de conciliación, con motivo y auditoría; no hay una interfaz gráfica.
 4. **Envío real deshabilitado.** El adaptador y el dispatcher están implementados y probados con transporte simulado. Hasta la autorización de la fase de salida, las respuestas quedan `pending`.
 5. **Vocabulario de búsqueda en memoria por proceso.** Tras reimportar el catálogo hay que reiniciar el worker.
 6. **Volumen.** PostgreSQL es suficiente para el volumen previsto. Si la tabla de eventos crece demasiado, el ADR 0001 describe la migración del `JobRepository` a otro broker sin tocar el procesamiento.
@@ -159,4 +190,5 @@ Antes de desplegar se requiere: autorización, proyecto Supabase real con las mi
 
 - Unitarias del runner (reintentos, agotamiento, propiedad, apagado, orden por contacto), del procesador (cada resultado del agente) y de la máquina de estados de las reservas.
 - Integración con PostgreSQL local: adquisición con dos workers, orden por contacto, líneas de negocio en paralelo, recuperación por lease vencido, propietario antiguo rechazado, reinicio, outbox idempotente, atomicidad del outbox, reservas concurrentes del presupuesto, ciclo de vida de las reservas, retención segura, flujo extremo a extremo.
+- Fase 5.1: transferencia atómica y pruebas de concurrencia (`tests/integration/test_hardening_postgres.py`), dos procesos independientes sobre la misma cola (`tests/integration/test_independent_processes.py`), ciclo de vida del proceso real (`tests/test_worker_process.py`), tiempo de evento y líneas (`tests/worker/test_event_time_and_lines.py`).
 - La regla de propiedad se comprobó con una mutación sobre el doble en memoria: al quitar la comprobación de token, la prueba de propietario antiguo falla. La versión SQL se verifica con la prueba de integración de lease vencido.

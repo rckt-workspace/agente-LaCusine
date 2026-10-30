@@ -40,6 +40,8 @@ class OutboundClaim:
     content_text: str
     attempts: int
     lease_token: UUID
+    kind: str = "reply"
+    business_phone_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -84,13 +86,14 @@ class OutboundRepository:
                             attempts = m.attempts + 1
                         from candidates
                         where m.id = candidates.id
-                        returning m.id, m.idempotency_key, m.conversation_id, m.content_text, m.attempts
+                        returning m.id, m.idempotency_key, m.conversation_id, m.content_text, m.attempts,
+                                  m.kind, m.business_phone_id
                         """,
                         {"limit": limit, "token": token, "owner": owner, "secs": lease_seconds},
                     ).fetchall()
         except (psycopg.Error, PoolClosed):
             raise StorageError("outbound_claim_failed") from None
-        return [OutboundClaim(r[0], r[1], r[2], r[3], r[4], token) for r in rows]
+        return [OutboundClaim(r[0], r[1], r[2], r[3], r[4], token, kind=r[5], business_phone_id=r[6]) for r in rows]
 
     def expire_leases(self) -> int:
         """Envíos con lease vencido: el resultado es desconocido, así que pasan a 'uncertain'."""
@@ -116,7 +119,8 @@ class OutboundRepository:
                     """
                     select c.automation_state, l.wa_contact_id,
                            (select max(m.received_at) from public.messages m
-                             where m.conversation_id = o.conversation_id and m.direction = 'inbound')
+                             where m.conversation_id = o.conversation_id
+                               and m.direction = 'inbound' and m.window_trusted)
                     from public.outbound_messages o
                     join public.conversations c on c.id = o.conversation_id
                     join public.leads l on l.id = c.lead_id

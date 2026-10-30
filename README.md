@@ -144,7 +144,7 @@ Dependencias de ejecución: `fastapi 0.141.1`, `uvicorn 0.52.3`, `psycopg 3.3.6`
 .venv\Scripts\python.exe -m pytest -q tests --ignore=tests/integration
 ```
 
-→ 431 pasan (1 opcional omitido: catálogo real).
+→ 512 pasan (1 opcional omitido: catálogo real).
 
 **Integración** (PostgreSQL real, base desechable local):
 
@@ -156,7 +156,7 @@ $env:TEST_DATABASE_URL = "postgresql://postgres:<contraseña-local>@127.0.0.1:55
 .venv\Scripts\python.exe -m pytest -q tests/integration
 ```
 
-→ 76 pasan.
+→ 116 pasan (fases 2 a 5.1; incluye dos procesos independientes sobre la misma cola y roles de mínimo privilegio con RLS).
 
 ### Guard de las pruebas destructivas
 
@@ -169,9 +169,11 @@ Las pruebas de integración reinician el esquema `public`. Por eso exigen **toda
 - Sin rastros de Supabase en host o usuario; esquema `postgresql://` o `postgres://`.
 - Si `DATABASE_URL` está definida, debe apuntar al mismo destino de prueba. Otro destino indica producción en el entorno.
 
-Si `TEST_DATABASE_URL` está definida pero es insegura, el módulo **falla**; no se omite. Las 29 pruebas del guard son unitarias y nunca se conectan a ninguna base.
+Si `TEST_DATABASE_URL` está definida pero es insegura, el módulo **falla**; no se omite. Las pruebas del guard son unitarias y nunca se conectan a ninguna base.
 
-**Todas:** `python -m pytest -q` → 507 pasan con la base de pruebas (431 unitarias + 76 de integración) y 1 se omite (prueba opcional del catálogo real). Sin base de datos: 346 pasan y 4 se omiten, cada una con su motivo.
+**Todas:** `python -m pytest -q` → 628 pasan con la base de pruebas (512 unitarias + 116 de integración) y 1 se omite (prueba opcional del catálogo real). Sin base de datos: 512 pasan y 8 se omiten, cada una con su motivo (7 módulos de integración y la prueba opcional).
+
+Las pruebas que dependen de la base de datos exigen `TEST_DATABASE_URL`; la contraseña del contenedor se pasa solo por variable de entorno del proceso y nunca se escribe en el repositorio.
 
 **Opcional:** `LACUSINE_CATALOG_XLSX=<ruta>` valida el catálogo real sin imprimir productos.
 
@@ -180,17 +182,29 @@ Si `TEST_DATABASE_URL` está definida pero es insegura, el módulo **falla**; no
 - **Envío:** `WHATSAPP_DRY_RUN=true` y `META_SEND_ENABLED=false` por defecto. Con ambos desactivados no sale ninguna solicitud a Meta.
 - **Configuración local:** copie `.env.example` a `.env` y active `LACUSINE_LOAD_DOTENV=true` solo en su máquina. Render no usa `.env`.
 - **Despliegue:** `render.yaml` describe el Web Service y el Background Worker. Auto-deploy desactivado. Ver [render-deployment.md](docs/render-deployment.md).
-- **Base de datos:** nueve migraciones en orden, sin aplicar a Supabase Cloud. Ver [supabase-deployment.md](docs/supabase-deployment.md).
+- **Base de datos:** once migraciones en orden (la 10 es de la fase 5.1 y la 11 añade roles de mínimo privilegio con RLS), sin aplicar a Supabase Cloud. Ver [supabase-deployment.md](docs/supabase-deployment.md).
 - **Variables:** ver [environment-variables.md](docs/environment-variables.md).
 - **Puerta de salida:** ver [go-live-checklist.md](docs/go-live-checklist.md). Ninguna casilla de producción está marcada.
 
+## Estabilización previa al piloto (fase 5.1)
+
+- **Hallazgos, correcciones y límites:** [auditoria-fase-5-1.md](docs/auditoria-fase-5-1.md). Cada hallazgo tiene evidencia y una prueba que lo demuestra.
+- **Control humano:** una transferencia pausa la IA en una transacción, cancela respuestas pendientes y envía una única confirmación fija.
+- **Ventana de 24 horas:** se mide con la hora de Meta. Un mensaje sin hora confiable no abre la ventana.
+- **Una línea de negocio:** el MVP rechaza eventos y salidas de otras líneas.
+- **Webhook:** el cuerpo se limita mientras se lee, antes de cualquier procesamiento.
+- **Worker en espera:** con `WORKER_ENABLED` distinto de `true`, el proceso no sale ni consume la cola.
+- **Conciliación:** `python -m app.admin.cli` resuelve casos inciertos con guardas, motivo y auditoría. No expone endpoints HTTP.
+- **Catálogo:** procedimiento en [catalogo-operacion.md](docs/catalogo-operacion.md). Sin importación automática.
+- **Operación del piloto (Fase 6, preparación):** orden de fusión, Supabase de prueba, Render, variables, primer mensaje y criterios GO / NO-GO en [operacion-piloto.md](docs/operacion-piloto.md). Nada de ello se ha ejecutado.
+
 ## Pendiente (no implementado, sin autorización)
 
-- **Aplicar migraciones a Supabase real** (incluidas las de la fase 4): requiere autorización y un plan de cambio.
-- **Rol de base de datos del backend** con privilegios mínimos (fuera del repositorio).
-- **Notificación a asesores** (correo, WhatsApp o Teams): hoy solo se registra la solicitud (Fase 5).
-- **Conciliación de reservas** `reserved` y `uncertain` y herramienta de revisión de `manual_review` (Fase 5).
-- **Importar el catálogo a Supabase**: requiere la aprobación de LCA.
+- **Aplicar migraciones a Supabase real** (incluidas las de las fases 4 y 5.1): requiere autorización y un plan de cambio.
+- **Rol de base de datos del backend y rol administrativo** con privilegios mínimos (fuera del repositorio).
+- **Notificación a asesores** (correo, WhatsApp o Teams): hoy solo se registra la solicitud.
+- **Importar el catálogo a Supabase**: requiere la aprobación de LCA y el procedimiento de [catalogo-operacion.md](docs/catalogo-operacion.md).
+- **Varias líneas de negocio:** requiere cambiar el esquema de leads (ver [whatsapp-integration.md](docs/whatsapp-integration.md)).
 - **Despliegue en Render** (API y worker como servicios separados): requiere autorización.
 - **Validación legal** de las políticas marcadas como pendientes (garantías de accesorios, devoluciones en promoción, 25 % de gasto administrativo).
 - **Precios de Meta, Anthropic y Supabase**: verificar antes de presupuestar. Las tarifas de Anthropic usadas como referencia se verificaron el 28/10/2026 y no están en el código.

@@ -35,7 +35,8 @@ class FakeOutbound:
         self.lease_lost = False
 
     def add(self, attempts=1, key="wamid.A:reply"):
-        claim = OutboundClaim(uuid.uuid4(), key, uuid.uuid4(), "Hola", attempts, TOKEN)
+        claim = OutboundClaim(uuid.uuid4(), key, uuid.uuid4(), "Hola", attempts, TOKEN,
+                              kind="reply", business_phone_id=PHONE)
         self.pending.append(claim)
         return claim
 

@@ -5,7 +5,7 @@ from pathlib import Path
 
 MIGRATIONS_DIR = Path(__file__).resolve().parents[1] / "supabase" / "migrations"
 RLS_TABLES = ("leads", "conversations", "messages", "webhook_events", "products", "human_handoffs", "llm_usage_events")
-NAME_PATTERN = re.compile(r"^\d{14}_[a-z_]+\.sql$")
+NAME_PATTERN = re.compile(r"^\d{14}_[a-z0-9_]+\.sql$")
 
 
 def _migration_files() -> list[Path]:

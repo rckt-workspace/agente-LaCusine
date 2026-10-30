@@ -28,6 +28,7 @@ from app.repositories.webhook_events import PostgresWebhookEventRepository, Webh
 from app.worker.bootstrap import build_worker
 from app.worker.config import WorkerSettings
 from app.worker.dispatcher import OutboxDispatcher
+from tests.integration.leases import age_all_leases
 from tests.integration.test_postgres_persistence import TEST_DATABASE_URL, _reset_and_migrate
 
 pytestmark = pytest.mark.integration
@@ -75,7 +76,7 @@ def _conversation(contact, last_inbound: datetime | None, state="automated"):
         if last_inbound is not None:
             conn.execute(
                 "insert into public.messages (conversation_id, direction, wa_message_id, message_type, received_at, "
-                "content_text, content_expires_at) values (%s, 'inbound', %s, 'text', %s, 'hola', %s)",
+                "content_text, content_expires_at, window_trusted) values (%s, 'inbound', %s, 'text', %s, 'hola', %s, true)",
                 (conv, f"wamid.IN-{uuid.uuid4().hex[:8]}", last_inbound, last_inbound + timedelta(days=7)),
             )
     return conv
@@ -86,8 +87,9 @@ def _outbound(conv, key, content="Tenemos varias opciones.", created=None, next_
     with psycopg.connect(TEST_DATABASE_URL, autocommit=True) as conn:
         return conn.execute(
             "insert into public.outbound_messages (idempotency_key, conversation_id, content_text, created_at, "
-            "next_attempt_at, delivery_status) values (%s, %s, %s, %s, coalesce(%s, now()), %s) returning id",
-            (key, conv, content, created, next_attempt, status),
+            "next_attempt_at, delivery_status, business_phone_id) values (%s, %s, %s, %s, coalesce(%s, now()), %s, %s) "
+            "returning id",
+            (key, conv, content, created, next_attempt, status, PHONE_ID),
         ).fetchone()[0]
 
 
@@ -116,10 +118,12 @@ def _status_webhook(client, message_id, status):
     return client.post("/webhook", content=body, headers={"X-Hub-Signature-256": _sign(body)})
 
 
-def _message_webhook(client, wamid, body_text):
+def _message_webhook(client, wamid, body_text, timestamp=None):
+    stamp = str(int(time.time())) if timestamp is None else timestamp
     body = json.dumps({"entry": [{"changes": [{"value": {
         "messaging_product": "whatsapp", "metadata": {"phone_number_id": PHONE_ID},
-        "messages": [{"from": RECIPIENT, "id": wamid, "type": "text", "text": {"body": body_text}}],
+        "messages": [{"from": RECIPIENT, "id": wamid, "timestamp": stamp, "type": "text",
+                      "text": {"body": body_text}}],
     }}]}]}).encode()
     return client.post("/webhook", content=body, headers={"X-Hub-Signature-256": _sign(body)})
 
@@ -180,7 +184,7 @@ def test_lease_expiry_makes_send_uncertain_and_it_is_never_resent():
         repo = OutboundRepository(pool)
         claims = repo.claim(1, "crashed-owner", lease_seconds=1, token=uuid.uuid4())
         assert len(claims) == 1 and _status_of(outbound_id) == "sending"
-        time.sleep(1.2)  # el dispatcher muere con la solicitud posiblemente aceptada por Meta
+        age_all_leases(TEST_DATABASE_URL)  # el dispatcher muere con la solicitud posiblemente aceptada por Meta
         assert repo.expire_leases() == 1
         assert _status_of(outbound_id) == "uncertain"
         sender = SimulatedWhatsAppSender()
@@ -197,7 +201,7 @@ def test_stale_owner_cannot_close_a_recovered_send():
         _outbound(conv, "k-stale")
         repo = OutboundRepository(pool)
         stale = repo.claim(1, "old", lease_seconds=1, token=uuid.uuid4())[0]
-        time.sleep(1.2)
+        age_all_leases(TEST_DATABASE_URL)
         repo.expire_leases()
         assert repo.finish(stale, "sent", external_message_id="wamid.STALE") is False
         assert _count("select count(*) from public.outbound_messages where external_message_id = 'wamid.STALE'") == 0
@@ -336,7 +340,7 @@ def test_meta_confirmation_recovers_an_uncertain_send():
 def test_database_loss_during_dispatch_does_not_crash_the_worker_loop():
     pool = _pool()
     worker_settings = WorkerSettings(enabled=True, owner="resilience", lease_seconds=60, processing_timeout_seconds=30)
-    settings = Settings(meta_app_secret=None, meta_verify_token=None, database_url=TEST_DATABASE_URL)
+    settings = Settings(meta_app_secret=None, meta_verify_token=None, database_url=TEST_DATABASE_URL, meta_phone_number_id=PHONE_ID)
     worker, worker_pool = build_worker(settings, worker_settings, sender=SimulatedWhatsAppSender())
     worker_pool.open(wait=True, timeout=10)
     try:
@@ -353,8 +357,13 @@ def test_restart_between_send_and_persistence_leaves_an_uncertain_not_a_duplicat
         conv = _conversation("573004000010", last_inbound=datetime.now(timezone.utc))
         _outbound(conv, "k-restart")
         repo = OutboundRepository(pool)
-        repo.claim(1, "before-restart", lease_seconds=1, token=uuid.uuid4())
-        time.sleep(1.2)
+        claimed = repo.claim(1, "before-restart", lease_seconds=1, token=uuid.uuid4())
+        assert len(claimed) == 1
+        # Se envejece el lease en la base en lugar de esperar: la espera de Python y el reloj de la transacción
+        # de PostgreSQL no coinciden de forma fiable, y la prueba fallaba de forma intermitente.
+        with psycopg.connect(TEST_DATABASE_URL, autocommit=True) as conn:
+            conn.execute("update public.outbound_messages set lease_expires_at = now() - interval '1 second' "
+                         "where id = %s", (claimed[0].outbound_id,))
         repo.expire_leases()
         sender = SimulatedWhatsAppSender()
         _dispatcher(pool, sender, owner="after-restart").dispatch_once()

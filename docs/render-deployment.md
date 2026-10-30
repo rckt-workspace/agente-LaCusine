@@ -27,7 +27,20 @@ Estado: **preparado, no ejecutado.** El archivo [`render.yaml`](../render.yaml) 
 - Comando de inicio: `python -m app.worker.main`.
 - **No admite `healthCheckPath`.** Render solo lo ofrece para web services. La supervisión del worker se hace por sus logs (`worker_started`, `dispatch_cycle`, `job_finished`) y por el conteo de la base.
 - Apagado: Render envía SIGTERM. El worker deja de reclamar trabajos nuevos y espera a los que están en curso (`Worker.shutdown`).
-- Con `WORKER_ENABLED=false` (valor en el blueprint) el proceso sale sin consumir la cola. Se activa a propósito, en la fase de salida.
+- Con `WORKER_ENABLED=false` (valor en el blueprint) el proceso queda **en espera**: vivo, sin conectarse a la base, sin consumir la cola y con un latido en log cada 10 minutos. No sale, para no entrar en bucle de reinicios.
+- Se activa a propósito, en la fase de salida, solo después de comprobar los efectos ([go-live-checklist.md](go-live-checklist.md)).
+
+### Estados operativos
+
+| Estado | Señal en el panel y en logs | Acción |
+|---|---|---|
+| No creado | El Blueprint no se ha aplicado | Ninguna |
+| Detenido | Servicio parado manualmente | Ninguna |
+| En espera | Estado "running"; log `worker_standby consuming=false` | Correcto mientras no se autorice |
+| Consumiendo | Log `worker_started`, luego `job_finished` | Solo con autorización |
+| Fallo de configuración | Salida con código 2 y mensaje que nombra la variable | Corregir variable en el panel |
+
+El worker en espera no es un error. Un reinicio continuo indica fallo de configuración, no un estado normal.
 
 Un solo Background Worker ejecuta el procesamiento de eventos **y** el despacho de salidas, porque comparten ciclo de vida, base y supervisión. Un segundo servicio solo aportaría costo; no se añade.
 
@@ -36,6 +49,8 @@ Un solo Background Worker ejecuta el procesamiento de eventos **y** el despacho 
 - `plan: starter` está como valor de partida. **Validar el plan y su costo en el panel antes de crear los servicios.** Este repositorio no declara precios.
 - El plan gratuito **suspende** el servicio por inactividad. Eso es incompatible con recibir webhooks y procesar una cola 24/7. No debe usarse para operación comercial.
 - Cada servicio se factura por separado. Un worker encendido consume recursos aunque no haya mensajes.
+
+**Costo del worker en espera:** un Background Worker de pago se factura mientras está encendido, **aunque esté en espera** (`WORKER_ENABLED=false`) y no procese nada. Mantener el servicio creado sin autorización genera gasto. Si no se va a usar, dejarlo detenido en el panel. El plan y el precio deben validarse en el panel de Render antes de crear el servicio; este repositorio no los declara.
 
 ## Despliegues automáticos
 
@@ -47,6 +62,21 @@ Un solo Background Worker ejecuta el procesamiento de eventos **y** el despacho 
 - En `render.yaml`, cada secreto aparece con `sync: false`. Render pide el valor al crear el Blueprint y no lo sobrescribe en sincronizaciones posteriores.
 - Ningún secreto tiene valor literal en el archivo. Una prueba del repositorio lo verifica.
 - Los valores se introducen en el panel de Render, no en GitHub ni en Supabase. Ver [environment-variables.md](environment-variables.md).
+
+## Verificación local del arranque (sin Render)
+
+Comprobado en esta máquina, con `.venv` y sin ninguna variable de entorno de Meta, Anthropic ni base de datos:
+
+| Comprobación | Resultado |
+|---|---|
+| `uvicorn app.main:app` arranca | Sí |
+| `GET /health` | `200` |
+| `GET /ready` sin base | `503` con `{"status": "unavailable"}`, sin motivo |
+| `GET /webhook` con token incorrecto | `403` |
+| `POST /webhook` sin firma | `503` (falla cerrado sin `META_APP_SECRET`) |
+| Worker en espera | Vivo, sin conexión, probado con proceso real (`tests/test_worker_process.py`) |
+
+Limitación: en Windows, el cierre con `SIGTERM` enviado desde Git Bash terminó con código 143 y no con 0. El apagado limpio debe comprobarse en Linux (el entorno de Render) antes de la puesta en marcha. Los nombres de variables requeridas por cada servicio están en `render.yaml` y en [environment-variables.md](environment-variables.md).
 
 ## Procedimiento (cuando haya autorización)
 
