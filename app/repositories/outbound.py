@@ -12,6 +12,8 @@ Garantías:
 
 from __future__ import annotations
 
+import logging
+
 from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
@@ -49,6 +51,9 @@ class DispatchContext:
     automation_state: str
     wa_contact_id: str
     last_inbound_at: datetime | None
+
+
+logger = logging.getLogger("lacusine.outbound")
 
 
 class OutboundRepository:
@@ -172,7 +177,9 @@ class OutboundRepository:
                          "token": claim.lease_token},
                     ).fetchone()
                     return row is not None
-        except (psycopg.Error, PoolClosed):
+        except (psycopg.Error, PoolClosed) as exc:
+            # Solo el tipo de excepción: el mensaje puede contener datos del cliente.
+            logger.error("outbound_finish_failed exc=%s", type(exc).__name__)
             raise StorageError("outbound_finish_failed") from None
 
     def apply_meta_status(self, external_message_id: str, new_status: str, error_code: str | None = None,

@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Response
 from fastapi.responses import JSONResponse
 
+from app.api.demo import build_demo_router
 from app.api.webhook import router as webhook_router
 from app.core.config import Settings
 from app.core.env import load_if_enabled
@@ -53,6 +54,24 @@ def create_app(
     app.state.pool = pool
     app.state.webhook_repository = webhook_repository
     app.include_router(webhook_router)
+
+    if settings.demo_enabled:
+        # La demo solo existe en entorno aislado. Falla al arrancar si le falta algo: nunca queda a medias.
+        if not settings.demo_token:
+            raise RuntimeError("demo_token_missing")
+        if settings.meta_send_enabled:
+            raise RuntimeError("demo_with_meta_send_refused")
+        if not settings.meta_phone_number_id:
+            raise RuntimeError("demo_line_missing")
+        if pool is None:
+            if not settings.database_url:
+                raise RuntimeError("demo_database_missing")
+            pool = create_pool(settings.database_url)
+            app.state.pool = pool
+        app.include_router(build_demo_router(
+            token=settings.demo_token, pool=pool, line=settings.meta_phone_number_id,
+            retention_days=settings.webhook_event_retention_days,
+        ))
 
     @app.get("/health", tags=["ops"])
     def health() -> dict[str, str]:

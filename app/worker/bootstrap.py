@@ -17,7 +17,7 @@ from app.repositories.crm import (
     PostgresMessageRepository,
     PostgresRecentTurnsReader,
 )
-from app.integrations.whatsapp_client import CloudApiSender
+from app.integrations.whatsapp_client import CloudApiSender, SimulatedWhatsAppSender
 from app.repositories.jobs import JobRepository
 from app.repositories.outbound import OutboundRepository
 from app.services.advisor_notifications import (
@@ -54,6 +54,11 @@ def build_worker(settings: Settings, worker_settings: WorkerSettings, stop_event
     outbox = OutboxRepository(pool, retention_days=settings.webhook_event_retention_days)
     outbound = OutboundRepository(pool)
     # Con el envío deshabilitado el cliente no hace solicitudes y el dispatcher no reclama nada.
+    if settings.demo_enabled and settings.meta_send_enabled:
+        raise ValueError("demo_with_meta_send_refused")
+    if sender is None and settings.demo_enabled:
+        # Demostración: el despacho es simulado. Nunca llega a Meta aunque el worker procese mensajes.
+        sender = SimulatedWhatsAppSender()
     sender = sender or CloudApiSender(
         access_token=settings.meta_access_token,
         phone_number_id=settings.meta_phone_number_id,
