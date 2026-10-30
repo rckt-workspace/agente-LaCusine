@@ -23,8 +23,9 @@ USER lacusine
 EXPOSE 8000
 STOPSIGNAL SIGTERM
 
-# Liveness: no depende de la base. Readiness (/ready) se usa para monitoreo, no como healthcheck de arranque.
-HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-  CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).status == 200 else 1)"
+# Liveness: no depende de la base. Solo aplica al modo web; el worker no expone HTTP. Readiness (/ready) se usa para monitoreo, no como healthcheck de arranque.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3   CMD python -c "import os,urllib.request,sys; port=os.environ.get('PORT','8000'); sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:'+port+'/health', timeout=3).status == 200 else 1)"
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Modo de ejecución por variable: web (defecto), worker o demo-combined. Ver app/runtime/entrypoint.py.
+ENV APP_RUN_MODE=web
+CMD ["python", "-m", "app.runtime.entrypoint"]
