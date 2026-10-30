@@ -28,6 +28,7 @@ from app.repositories.webhook_events import PostgresWebhookEventRepository, Webh
 from app.worker.bootstrap import build_worker
 from app.worker.config import WorkerSettings
 from app.worker.dispatcher import OutboxDispatcher
+from tests.integration.leases import age_all_leases
 from tests.integration.test_postgres_persistence import TEST_DATABASE_URL, _reset_and_migrate
 
 pytestmark = pytest.mark.integration
@@ -183,7 +184,7 @@ def test_lease_expiry_makes_send_uncertain_and_it_is_never_resent():
         repo = OutboundRepository(pool)
         claims = repo.claim(1, "crashed-owner", lease_seconds=1, token=uuid.uuid4())
         assert len(claims) == 1 and _status_of(outbound_id) == "sending"
-        time.sleep(1.2)  # el dispatcher muere con la solicitud posiblemente aceptada por Meta
+        age_all_leases(TEST_DATABASE_URL)  # el dispatcher muere con la solicitud posiblemente aceptada por Meta
         assert repo.expire_leases() == 1
         assert _status_of(outbound_id) == "uncertain"
         sender = SimulatedWhatsAppSender()
@@ -200,7 +201,7 @@ def test_stale_owner_cannot_close_a_recovered_send():
         _outbound(conv, "k-stale")
         repo = OutboundRepository(pool)
         stale = repo.claim(1, "old", lease_seconds=1, token=uuid.uuid4())[0]
-        time.sleep(1.2)
+        age_all_leases(TEST_DATABASE_URL)
         repo.expire_leases()
         assert repo.finish(stale, "sent", external_message_id="wamid.STALE") is False
         assert _count("select count(*) from public.outbound_messages where external_message_id = 'wamid.STALE'") == 0
@@ -356,8 +357,13 @@ def test_restart_between_send_and_persistence_leaves_an_uncertain_not_a_duplicat
         conv = _conversation("573004000010", last_inbound=datetime.now(timezone.utc))
         _outbound(conv, "k-restart")
         repo = OutboundRepository(pool)
-        repo.claim(1, "before-restart", lease_seconds=1, token=uuid.uuid4())
-        time.sleep(1.2)
+        claimed = repo.claim(1, "before-restart", lease_seconds=1, token=uuid.uuid4())
+        assert len(claimed) == 1
+        # Se envejece el lease en la base en lugar de esperar: la espera de Python y el reloj de la transacción
+        # de PostgreSQL no coinciden de forma fiable, y la prueba fallaba de forma intermitente.
+        with psycopg.connect(TEST_DATABASE_URL, autocommit=True) as conn:
+            conn.execute("update public.outbound_messages set lease_expires_at = now() - interval '1 second' "
+                         "where id = %s", (claimed[0].outbound_id,))
         repo.expire_leases()
         sender = SimulatedWhatsAppSender()
         _dispatcher(pool, sender, owner="after-restart").dispatch_once()

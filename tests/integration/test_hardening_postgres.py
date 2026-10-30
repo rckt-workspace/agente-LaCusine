@@ -32,6 +32,7 @@ from app.repositories.webhook_events import PostgresWebhookEventRepository, Webh
 from app.worker.bootstrap import build_worker
 from app.worker.config import WorkerSettings
 from app.worker.dispatcher import OutboxDispatcher
+from tests.integration.leases import age_all_leases
 from tests.integration.test_postgres_persistence import TEST_DATABASE_URL, _reset_and_migrate
 
 pytestmark = pytest.mark.integration
@@ -335,7 +336,7 @@ def test_persistence_failure_after_a_successful_send_becomes_uncertain_and_is_ne
         assert len(sender.sent) == 1
         assert _status("outbound_messages", "delivery_status", outbound_id) == "sending"
 
-        time.sleep(1.2)  # el lease vence: el resultado es desconocido
+        age_all_leases(TEST_DATABASE_URL)  # el lease vence: el resultado es desconocido
         dispatcher.dispatch_once()
         assert _status("outbound_messages", "delivery_status", outbound_id) == "uncertain"
         assert len(sender.sent) == 1  # nunca hubo un segundo envío

@@ -29,6 +29,7 @@ from app.services.budget_ledger import (
 )
 from app.worker.bootstrap import build_worker
 from app.worker.config import WorkerSettings
+from tests.integration.leases import age_all_leases
 from tests.integration.test_postgres_persistence import TEST_DATABASE_URL, _reset_and_migrate
 
 pytestmark = pytest.mark.integration
@@ -173,7 +174,7 @@ def test_expired_lease_is_recovered_and_stale_owner_is_rejected():
         _insert(pool_old, "wamid.LEASE")
         old = JobRepository(pool_old, owner="old", lease_seconds=1)
         stale = old.claim(1, uuid.uuid4)[0]
-        time.sleep(1.2)  # el worker antiguo "muere" sin finalizar
+        age_all_leases(TEST_DATABASE_URL)  # el worker antiguo "muere" sin finalizar
 
         new = JobRepository(pool_new, owner="new", lease_seconds=60)
         assert new.recover_expired(max_attempts=5) == 1
@@ -198,7 +199,7 @@ def test_expired_lease_past_max_attempts_goes_to_manual_review():
         _insert(pool, "wamid.EXH")
         jobs = JobRepository(pool, owner="a", lease_seconds=1)
         jobs.claim(1, uuid.uuid4)
-        time.sleep(1.2)
+        age_all_leases(TEST_DATABASE_URL)
         assert jobs.recover_expired(max_attempts=1) == 1
         assert _status("wamid.EXH") == "manual_review"
         assert jobs.claim(5, uuid.uuid4) == []  # no se reintenta solo
@@ -213,7 +214,7 @@ def test_renew_keeps_ownership_while_processing():
         jobs = JobRepository(pool, owner="a", lease_seconds=1)
         claim = jobs.claim(1, uuid.uuid4)[0]
         assert jobs.renew(claim) is True
-        time.sleep(1.2)
+        age_all_leases(TEST_DATABASE_URL)
         assert jobs.renew(claim) is False  # ya venció: la renovación tardía se rechaza
     finally:
         pool.close()
@@ -260,7 +261,7 @@ def test_worker_restart_resumes_pending_events():
         before.claim(2, uuid.uuid4)  # reclama ambos y "muere"
     finally:
         pool.close()
-    time.sleep(1.2)
+    age_all_leases(TEST_DATABASE_URL)
 
     restarted_pool = _pool()
     try:
