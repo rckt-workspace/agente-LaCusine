@@ -13,6 +13,8 @@ EXPIRE_SQL = (
     "update public.webhook_events set lease_expires_at = now() - interval '1 second' "
     "where lease_token is not null",
     "update public.contact_leases set lease_expires_at = now() - interval '1 second'",
+    "update public.advisor_notifications set lease_expires_at = now() - interval '1 second' "
+    "where lease_token is not null",
 )
 
 

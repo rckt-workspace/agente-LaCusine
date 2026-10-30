@@ -77,3 +77,15 @@ Aplicar en Supabase Cloud exige la autorización del responsable del proyecto y 
 - Ingesta automática, programada o desde un servicio externo. No existe y no se propone en esta fase.
 - Eliminación automática de productos retirados.
 - Inclusión del archivo original en el repositorio, en la imagen de contenedor o en Render.
+
+## Productos descontinuados (decisión pendiente)
+
+Estado: **no implementado.** La importación no distingue un producto retirado de uno vigente. Un producto que desaparece del archivo permanece en la base, como se describe arriba.
+
+Regla propuesta, pendiente de aprobación comercial:
+- Una importación **completa** que no incluye un producto lo marca como ausente (`missing_since`), sin borrarlo.
+- Un producto ausente no se recomienda en las respuestas del agente, pero sigue visible para la administración.
+- Si vuelve a aparecer en una importación, se limpia la marca.
+- Solo una persona autorizada puede retirarlo definitivamente, con motivo y auditoría.
+
+No se eliminan productos automáticamente. Hasta aprobar la regla, el agente puede citar un producto que ya no se vende: esa limitación debe comunicarse al responsable de contenido.

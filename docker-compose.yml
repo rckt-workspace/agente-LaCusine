@@ -1,0 +1,105 @@
+# Entorno LOCAL de desarrollo y validación (Modo A de docs/local-development.md).
+# Sin Supabase, sin Meta, sin Anthropic. Proveedores externos simulados por configuración.
+#
+# Secretos: nunca en este archivo. Se leen de un .env local (ignorado por Git) o del entorno del host.
+# Variables obligatorias: LACUSINE_DB_OWNER_PASSWORD, LACUSINE_DEV_APP_PASSWORD, LACUSINE_DEV_ADMIN_PASSWORD,
+#                         LACUSINE_LOCAL_APP_SECRET, LACUSINE_LOCAL_VERIFY_TOKEN.
+#
+# Orden de arranque: db (healthy) -> migrate (una vez, explícito) -> dev-roles (una vez) -> api y worker.
+# El worker arranca en espera (WORKER_ENABLED=false) salvo que se active explícitamente.
+
+x-app-env: &app-env
+  APP_ENV: local
+  LACUSINE_ENVIRONMENT: local
+  META_SEND_ENABLED: "false"
+  WHATSAPP_DRY_RUN: "true"
+  ANTHROPIC_ENABLED: "false"
+  AGENT_DRY_RUN: "true"
+  META_GRAPH_API_VERSION: "v26.0"
+  META_PHONE_NUMBER_ID: "100200300400"
+  WHATSAPP_ALLOWED_RECIPIENTS: ""
+  ADVISOR_NOTIFIER: "simulated"
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: lacusine_dev
+      POSTGRES_PASSWORD: ${LACUSINE_DB_OWNER_PASSWORD:?define LACUSINE_DB_OWNER_PASSWORD en .env}
+    ports:
+      - "127.0.0.1:55440:5432"
+    volumes:
+      - lacusine_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d lacusine_dev"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+    networks: [internal]
+
+  migrate:
+    build: .
+    image: lacusine:local
+    command: ["python", "-m", "app.db.migrate", "--dir", "supabase/migrations", "--apply"]
+    environment:
+      DATABASE_URL: postgresql://postgres:${LACUSINE_DB_OWNER_PASSWORD:?}@db:5432/lacusine_dev
+      <<: *app-env
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+    networks: [internal]
+
+  dev-roles:
+    image: lacusine:local
+    command: ["python", "-m", "app.db.dev_roles"]
+    environment:
+      DATABASE_URL: postgresql://postgres:${LACUSINE_DB_OWNER_PASSWORD:?}@db:5432/lacusine_dev
+      LACUSINE_DEV_APP_PASSWORD: ${LACUSINE_DEV_APP_PASSWORD:?define LACUSINE_DEV_APP_PASSWORD en .env}
+      LACUSINE_DEV_ADMIN_PASSWORD: ${LACUSINE_DEV_ADMIN_PASSWORD:?define LACUSINE_DEV_ADMIN_PASSWORD en .env}
+      <<: *app-env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
+    networks: [internal]
+
+  api:
+    image: lacusine:local
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      DATABASE_URL: postgresql://lacusine_app:${LACUSINE_DEV_APP_PASSWORD:?}@db:5432/lacusine_dev
+      META_APP_SECRET: ${LACUSINE_LOCAL_APP_SECRET:?define LACUSINE_LOCAL_APP_SECRET en .env}
+      META_VERIFY_TOKEN: ${LACUSINE_LOCAL_VERIFY_TOKEN:?define LACUSINE_LOCAL_VERIFY_TOKEN en .env}
+      <<: *app-env
+    ports:
+      - "127.0.0.1:${LACUSINE_API_PORT:-18000}:8000"  # puerto configurable: 8000 puede estar ocupado
+    depends_on:
+      dev-roles:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    stop_grace_period: 20s
+    networks: [internal]
+
+  worker:
+    image: lacusine:local
+    command: ["python", "-m", "app.worker.main"]
+    environment:
+      DATABASE_URL: postgresql://lacusine_app:${LACUSINE_DEV_APP_PASSWORD:?}@db:5432/lacusine_dev
+      WORKER_ENABLED: ${WORKER_ENABLED:-false}
+      <<: *app-env
+    healthcheck:
+      disable: true
+    depends_on:
+      dev-roles:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    stop_grace_period: 30s
+    networks: [internal]
+
+volumes:
+  lacusine_pgdata:
+
+networks:
+  internal:

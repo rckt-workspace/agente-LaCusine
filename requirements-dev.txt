@@ -1,3 +1,5 @@
 -r requirements.txt
 pytest==9.0.3
 httpx==0.28.1
+pyyaml==6.0.3  # solo validación del blueprint de Render en pruebas
+playwright==1.64.1  # solo pruebas de navegador (tests/browser); usa Chrome o Edge instalados

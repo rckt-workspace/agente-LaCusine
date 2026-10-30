@@ -124,3 +124,28 @@ Si una variable no está definida, el sistema se comporta así:
 - Un secreto en el repositorio, en un `render.yaml` con valor literal, en un log o en una respuesta HTTP.
 - Un `.env` real en un commit, una imagen o un PR.
 - La URL de PostgreSQL con contraseña impresa en un log. El código solo registra nombres de variables y códigos de error.
+
+## Entorno local Docker y notificaciones (fase 6)
+
+| Variable | Obligatoria | Secreta | Descripción |
+|---|---|---|---|
+| `ADVISOR_NOTIFIER` | No | No | Canal de avisos a asesores. Hoy solo `simulated`. Cualquier otro valor impide arrancar el worker. |
+| `LACUSINE_API_PORT` | No | No | Puerto del host para la API en Compose (por defecto 18000). |
+| `LACUSINE_DB_OWNER_PASSWORD` | Sí (Compose) | Sí | Contraseña del propietario de la base local de desarrollo. Solo migraciones y creación de roles. |
+| `LACUSINE_DEV_APP_PASSWORD` | Sí (Compose) | Sí | Contraseña del rol `lacusine_app` local. |
+| `LACUSINE_DEV_ADMIN_PASSWORD` | Sí (Compose) | Sí | Contraseña del rol `lacusine_admin` local. |
+| `LACUSINE_LOCAL_APP_SECRET` | Sí (Compose) | Sí | Secreto de firma del webhook local. |
+| `LACUSINE_LOCAL_VERIFY_TOKEN` | Sí (Compose) | Sí | Token del handshake local. |
+
+Estas variables viven en `.env` local (ignorado por Git) o en el entorno del host. `docker-compose.yml` no contiene valores. La imagen no incluye `.env`.
+
+## Modo de ejecución y demostración (fase 6, cierre)
+
+| Variable | Obligatoria | Secreta | Descripción |
+|---|---|---|---|
+| `APP_RUN_MODE` | No (`web`) | No | `web`, `worker` o `demo-combined`. Cualquier otro valor impide arrancar. |
+| `PORT` | No (`8000`) | No | Puerto de la API. Render lo asigna. Debe estar entre 1 y 65535. |
+| `DEMO_ENABLED` | No (`false`) | No | Activa `/demo`. Solo en el destino de demostración. Con `demo-combined` es obligatoria. |
+| `DEMO_TOKEN` | Si la demo está activa | Sí | Token de acceso a `/demo`. Nunca en el repositorio. |
+
+La demo arranca solo si además hay base de datos, línea de negocio y `META_SEND_ENABLED=false`. Si falta cualquiera, el proceso falla al arrancar.

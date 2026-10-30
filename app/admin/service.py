@@ -55,6 +55,7 @@ class AdminService:
                 "budget_reservations": "select status, count(*) from public.budget_reservations group by 1",
                 "human_handoffs": "select status, count(*) from public.human_handoffs group by 1",
                 "conversations": "select automation_state, count(*) from public.conversations group by 1",
+                "advisor_notifications": "select status, count(*) from public.advisor_notifications group by 1",
             }
             return {name: {str(k): int(v) for k, v in conn.execute(sql).fetchall()} for name, sql in queries.items()}
 

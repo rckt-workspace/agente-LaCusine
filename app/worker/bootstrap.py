@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+import uuid
 
 from app.agent.factory import build_commercial_agent
 from app.core.config import Settings
@@ -16,9 +17,14 @@ from app.repositories.crm import (
     PostgresMessageRepository,
     PostgresRecentTurnsReader,
 )
-from app.integrations.whatsapp_client import CloudApiSender
+from app.integrations.whatsapp_client import CloudApiSender, SimulatedWhatsAppSender
 from app.repositories.jobs import JobRepository
 from app.repositories.outbound import OutboundRepository
+from app.services.advisor_notifications import (
+    AdvisorNotificationDispatcher,
+    PostgresAdvisorNotificationRepository,
+    SimulatedAdvisorNotifier,
+)
 from app.worker.dispatcher import OutboxDispatcher
 from app.repositories.llm_usage import PostgresUsageStore
 from app.repositories.outbox import OutboxRepository
@@ -29,7 +35,7 @@ from app.worker.runner import Worker
 
 
 def build_worker(settings: Settings, worker_settings: WorkerSettings, stop_event: threading.Event | None = None,
-                 sender=None):
+                 sender=None, advisor_notifier=None):
     """Devuelve (worker, pool). El llamador abre y cierra el pool.
 
     `sender` solo lo usan las pruebas (simulador). En producción se usa el adaptador configurado.
@@ -48,6 +54,11 @@ def build_worker(settings: Settings, worker_settings: WorkerSettings, stop_event
     outbox = OutboxRepository(pool, retention_days=settings.webhook_event_retention_days)
     outbound = OutboundRepository(pool)
     # Con el envío deshabilitado el cliente no hace solicitudes y el dispatcher no reclama nada.
+    if settings.demo_enabled and settings.meta_send_enabled:
+        raise ValueError("demo_with_meta_send_refused")
+    if sender is None and settings.demo_enabled:
+        # Demostración: el despacho es simulado. Nunca llega a Meta aunque el worker procese mensajes.
+        sender = SimulatedWhatsAppSender()
     sender = sender or CloudApiSender(
         access_token=settings.meta_access_token,
         phone_number_id=settings.meta_phone_number_id,
@@ -91,4 +102,15 @@ def build_worker(settings: Settings, worker_settings: WorkerSettings, stop_event
         backoff_max_seconds=worker_settings.backoff_max_seconds,
         batch_size=worker_settings.batch_size,
     )
-    return Worker(worker_settings, jobs, processor, stop_event=stop_event, dispatcher=dispatcher), pool
+    if settings.advisor_notifier != "simulated" and advisor_notifier is None:
+        # Ningún canal real está implementado. Falla cerrado en lugar de caer en otro canal.
+        raise ValueError("advisor_notifier_unsupported")
+    notifications = AdvisorNotificationDispatcher(
+        PostgresAdvisorNotificationRepository(pool, max_attempts=worker_settings.max_attempts),
+        advisor_notifier or SimulatedAdvisorNotifier(),
+        owner_token_factory=uuid.uuid4,
+        lease_seconds=worker_settings.lease_seconds,
+        batch_size=worker_settings.batch_size,
+    )
+    return Worker(worker_settings, jobs, processor, stop_event=stop_event, dispatcher=dispatcher,
+                  notifications=notifications), pool

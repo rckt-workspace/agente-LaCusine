@@ -1,73 +1,56 @@
-# Blueprint de Render. NO CREA SERVICIOS POR SÍ MISMO: se usa al crear el Blueprint desde el panel
-# de Render, con autorización expresa del equipo. Ver docs/render-deployment.md.
+# Blueprint de Render — DESTINO DE DEMOSTRACIÓN (Render Free). No es producción.
 #
-# Reglas de este archivo:
-#   * Ningún valor secreto aparece aquí. Los secretos se marcan con `sync: false` y se introducen en el panel.
-#   * Los despliegues automáticos están desactivados (autoDeployTrigger: off).
-#   * El envío real de WhatsApp y las llamadas a Claude arrancan DESACTIVADOS.
-#   * El Web Service recibe webhooks HTTP. El Background Worker procesa la cola y despacha las respuestas.
-#     No son el mismo proceso: el worker nunca se ejecuta dentro de FastAPI.
+# NO CREA SERVICIOS POR SÍ MISMO: se usa al crear el Blueprint desde el panel de Render, con autorización
+# expresa del responsable. Ver docs/render-free-demo.md antes de crear nada.
+#
+# Reglas:
+#   * Un único Web Service con Docker. API y worker corren juntos (APP_RUN_MODE=demo-combined) con supervisor.
+#   * Plan Free: el servicio se suspende tras 15 minutos sin tráfico. El procesamiento NO es continuo.
+#   * Ningún secreto aparece aquí: se marcan con `sync: false` y se introducen en Render Environment.
+#   * Auto-deploy desactivado. Ningún push despliega solo.
+#   * Ninguna integración externa real: Meta, Anthropic y envíos quedan desactivados o simulados.
+#   * PostgreSQL NO está dentro del servicio: se conecta con DATABASE_URL (base aislada de demostración).
+#   * DEMO_ENABLED=true solo en este destino. Nunca en producción.
 
 services:
   - type: web
-    name: lacusine-api
-    runtime: python
-    plan: starter  # validar plan y costo antes de crear; el plan gratuito suspende el servicio por inactividad
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
-    healthCheckPath: /health  # liveness; /ready depende de la base y se usa para monitoreo
-    autoDeployTrigger: off
+    name: lacusine-demo
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health  # liveness; no depende de la base
+    autoDeployTrigger: "off"  # entre comillas: en YAML 1.1 off es booleano
     envVars:
-      - key: PYTHON_VERSION
-        value: 3.11.9
+      - key: APP_RUN_MODE
+        value: demo-combined
+      - key: DEMO_ENABLED
+        value: "true"
+      - key: DEMO_TOKEN
+        sync: false
+      - key: DEMO_PUBLIC_ORIGIN
+        sync: false  # https://<servicio>.onrender.com, conocido tras crear el servicio
+      - key: DATABASE_URL
+        sync: false
       - key: META_APP_SECRET
         sync: false
       - key: META_VERIFY_TOKEN
         sync: false
-      - key: DATABASE_URL
-        sync: false
       - key: META_PHONE_NUMBER_ID
-        sync: false  # el webhook descarta eventos de otra línea solo si esta variable está definida
+        sync: false
       - key: META_GRAPH_API_VERSION
         value: v26.0
-      - key: META_SEND_ENABLED
-        value: "false"
-      - key: WHATSAPP_DRY_RUN
-        value: "true"
-      - key: ANTHROPIC_ENABLED
-        value: "false"
-      - key: AGENT_DRY_RUN
-        value: "true"
-
-  - type: worker
-    name: lacusine-worker
-    runtime: python
-    plan: starter  # validar plan y costo antes de crear
-    buildCommand: pip install -r requirements.txt
-    startCommand: python -m app.worker.main
-    autoDeployTrigger: off
-    envVars:
-      - key: PYTHON_VERSION
-        value: 3.11.9
       - key: WORKER_ENABLED
-        value: "false"  # activar solo tras la lista de verificación de salida a producción
-      - key: DATABASE_URL
-        sync: false
-      - key: META_ACCESS_TOKEN
-        sync: false
-      - key: META_PHONE_NUMBER_ID
-        sync: false
-      - key: META_GRAPH_API_VERSION
-        value: v26.0
+        value: "true"
+      - key: WORKER_MAX_CONCURRENCY
+        value: "1"
       - key: META_SEND_ENABLED
         value: "false"
       - key: WHATSAPP_DRY_RUN
         value: "true"
-      - key: WHATSAPP_ALLOWED_RECIPIENTS
-        sync: false
-      - key: ANTHROPIC_API_KEY
-        sync: false
       - key: ANTHROPIC_ENABLED
         value: "false"
       - key: AGENT_DRY_RUN
         value: "true"
+      - key: ADVISOR_NOTIFIER
+        value: simulated

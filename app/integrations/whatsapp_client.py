@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 import re
 import threading
+import uuid
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -241,7 +242,6 @@ class SimulatedWhatsAppSender:
 
     script: list = field(default_factory=list)
     sent: list[SendRequest] = field(default_factory=list)
-    _counter: int = 0
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def send_text(self, request: SendRequest) -> SendResult:
@@ -249,10 +249,9 @@ class SimulatedWhatsAppSender:
         with self._lock:
             self.sent.append(request)
             item = self.script.pop(0) if self.script else None
-            self._counter += 1
-            counter = self._counter
         if isinstance(item, BaseException):
             raise item
         if callable(item):
             return item(request)
-        return SendResult(message_id=f"wamid.SIM{counter:06d}", http_status=200)
+        # Identificador único por envío, como en Meta. Un contador por proceso colisiona entre procesos.
+        return SendResult(message_id=f"wamid.SIM{uuid.uuid4().hex}", http_status=200)

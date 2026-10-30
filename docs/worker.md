@@ -192,3 +192,19 @@ Antes de desplegar se requiere: autorización, proyecto Supabase real con las mi
 - Integración con PostgreSQL local: adquisición con dos workers, orden por contacto, líneas de negocio en paralelo, recuperación por lease vencido, propietario antiguo rechazado, reinicio, outbox idempotente, atomicidad del outbox, reservas concurrentes del presupuesto, ciclo de vida de las reservas, retención segura, flujo extremo a extremo.
 - Fase 5.1: transferencia atómica y pruebas de concurrencia (`tests/integration/test_hardening_postgres.py`), dos procesos independientes sobre la misma cola (`tests/integration/test_independent_processes.py`), ciclo de vida del proceso real (`tests/test_worker_process.py`), tiempo de evento y líneas (`tests/worker/test_event_time_and_lines.py`).
 - La regla de propiedad se comprobó con una mutación sobre el doble en memoria: al quitar la comprobación de token, la prueba de propietario antiguo falla. La versión SQL se verifica con la prueba de integración de lease vencido.
+
+## Notificaciones a asesores (fase 6)
+
+- Cada transferencia encola un aviso en `public.advisor_notifications` **dentro de la misma transacción** que la abre. Una transferencia nunca existe sin su aviso.
+- El despachador corre en el ciclo del worker, después del outbox. Usa leases: un aviso con lease vencido vuelve a `pending`, nunca se marca como enviado.
+- El aviso contiene solo identificadores, motivo y prioridad. No contiene nombre, teléfono ni texto del cliente.
+- Hoy solo existe el canal simulado. Un canal real debe implementar `AdvisorNotifier` y deduplicar por `notification_id`.
+- Errores del canal: reintentables (vuelven a `pending` hasta agotar intentos) o no reintentables (fallan de inmediato). Un error inesperado no detiene el ciclo y su detalle no se registra.
+
+## Herramienta de migraciones (fase 6)
+
+`python -m app.db.migrate --dir supabase/migrations` lista lo pendiente. Con `--apply` aplica cada archivo en su propia transacción y registra su hash. Un archivo ya aplicado cuyo contenido cambió detiene la operación. Ni la API ni el worker la ejecutan.
+
+## Entorno local Docker (fase 6)
+
+Guía paso a paso en [local-development.md](local-development.md). Desarrollo y validación sin servicios externos. El worker arranca en espera.

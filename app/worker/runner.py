@@ -58,11 +58,13 @@ class Worker:
         token_factory=uuid.uuid4,
         rng: random.Random | None = None,
         dispatcher=None,
+        notifications=None,
     ) -> None:
         self._settings = settings
         self._jobs = jobs
         self._processor = processor
         self._dispatcher = dispatcher
+        self._notifications = notifications
         self._stop = stop_event or threading.Event()
         self._sleep = sleep
         self._clock = clock
@@ -93,6 +95,8 @@ class Worker:
         wait(futures)
         if self._dispatcher is not None:
             self._dispatch()
+        if self._notifications is not None:
+            self._notify()
         return len(claims)
 
     def _dispatch(self) -> None:
@@ -106,6 +110,17 @@ class Worker:
             logger.info("dispatch_cycle claimed=%d sent=%d retry=%d failed=%d uncertain=%d blocked=%d cancelled=%d "
                         "expired=%d", stats.claimed, stats.sent, stats.pending_retry, stats.failed,
                         stats.uncertain, stats.blocked, stats.cancelled, stats.expired)
+
+    def _notify(self) -> None:
+        """Envía los avisos a asesores pendientes. Un fallo del canal o de la base no detiene el bucle."""
+        try:
+            stats = self._notifications.dispatch_once()
+        except StorageError as exc:
+            logger.error("notify_cycle_failed code=%s", exc.args[0] if exc.args else "storage_error")
+            return
+        if stats.claimed:
+            logger.info("notify_cycle claimed=%d sent=%d retry=%d failed=%d", stats.claimed, stats.sent,
+                        stats.retry, stats.failed)
 
     def run_forever(self) -> None:
         logger.info("worker_started owner=%s concurrency=%d", self._settings.owner, self._settings.max_concurrency)
