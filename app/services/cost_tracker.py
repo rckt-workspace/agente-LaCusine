@@ -44,6 +44,28 @@ class Pricing:
     reference: str
 
     @classmethod
+    def from_openrouter(cls, settings: Settings) -> "Pricing | None":
+        """Tarifas de OpenRouter. Solo válidas para el modelo para el que se escribieron (OPENROUTER_PRICING_MODEL).
+
+        Sin tarifas, sin modelo de tarifa, o con tarifas negativas: None. Sin None no hay llamada real.
+        """
+        input_price = settings.openrouter_price_input_usd_per_mtok
+        output_price = settings.openrouter_price_output_usd_per_mtok
+        if input_price is None or output_price is None or input_price < 0 or output_price < 0:
+            return None
+        if not settings.openrouter_pricing_model or settings.openrouter_pricing_model != settings.openrouter_model:
+            return None
+        reference = settings.openrouter_pricing_reference or f"openrouter:{settings.openrouter_model}"
+        # OpenRouter no informa caché en este adaptador: sus tarifas se igualan a la de entrada (sobreestima).
+        return cls(
+            input_per_mtok=input_price,
+            output_per_mtok=output_price,
+            cache_write_per_mtok=input_price,
+            cache_read_per_mtok=input_price,
+            reference=reference,
+        )
+
+    @classmethod
     def from_settings(cls, settings: Settings) -> "Pricing | None":
         if settings.price_input_usd_per_mtok is None or settings.price_output_usd_per_mtok is None:
             return None

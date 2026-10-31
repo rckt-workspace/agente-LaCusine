@@ -77,6 +77,8 @@ class Settings:
     whatsapp_max_concurrency: int = 2
 
     # Agente y Claude. Por defecto todo deshabilitado.
+    # LLM_PROVIDER: fake | anthropic | openrouter. None = comportamiento histórico (Anthropic si está habilitado).
+    llm_provider: str | None = None
     anthropic_enabled: bool = False
     agent_dry_run: bool = True
     anthropic_api_key: str | None = field(default=None, repr=False)
@@ -101,6 +103,18 @@ class Settings:
     price_cache_read_usd_per_mtok: Decimal | None = None
     pricing_reference: str | None = None
 
+    # OpenRouter. Clave y modelo solo en variables de entorno. Las tarifas van ligadas a un modelo concreto
+    # (openrouter_pricing_model) para que no se apliquen a otro modelo por error.
+    openrouter_api_key: str | None = field(default=None, repr=False)
+    openrouter_model: str | None = None
+    openrouter_timeout_seconds: float = 20.0
+    openrouter_max_retries: int = 1
+    openrouter_max_concurrency: int = 2
+    openrouter_price_input_usd_per_mtok: Decimal | None = None
+    openrouter_price_output_usd_per_mtok: Decimal | None = None
+    openrouter_pricing_model: str | None = None
+    openrouter_pricing_reference: str | None = None
+
     # Presupuestos en USD estimados. None = sin límite de ese tipo (no recomendado en producción).
     agent_daily_budget_usd: Decimal | None = None
     agent_monthly_budget_usd: Decimal | None = None
@@ -122,6 +136,7 @@ class Settings:
             whatsapp_allowed_recipients=_csv("WHATSAPP_ALLOWED_RECIPIENTS"),
             whatsapp_timeout_seconds=_float("WHATSAPP_TIMEOUT_SECONDS", 10.0),
             whatsapp_max_concurrency=_int("WHATSAPP_MAX_CONCURRENCY", 2),
+            llm_provider=(os.environ.get("LLM_PROVIDER") or "").strip().lower() or None,
             anthropic_enabled=_bool("ANTHROPIC_ENABLED", False),
             agent_dry_run=_bool("AGENT_DRY_RUN", True),
             anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY") or None,
@@ -143,6 +158,15 @@ class Settings:
             price_cache_write_usd_per_mtok=_decimal("ANTHROPIC_PRICE_CACHE_WRITE_USD_PER_MTOK"),
             price_cache_read_usd_per_mtok=_decimal("ANTHROPIC_PRICE_CACHE_READ_USD_PER_MTOK"),
             pricing_reference=os.environ.get("ANTHROPIC_PRICING_REFERENCE") or None,
+            openrouter_api_key=os.environ.get("OPENROUTER_API_KEY") or None,
+            openrouter_model=os.environ.get("OPENROUTER_MODEL") or None,
+            openrouter_timeout_seconds=_float("OPENROUTER_TIMEOUT_SECONDS", 20.0),
+            openrouter_max_retries=_int("OPENROUTER_MAX_RETRIES", 1),
+            openrouter_max_concurrency=_int("OPENROUTER_MAX_CONCURRENCY", 2),
+            openrouter_price_input_usd_per_mtok=_decimal("OPENROUTER_PRICE_INPUT_USD_PER_MTOK"),
+            openrouter_price_output_usd_per_mtok=_decimal("OPENROUTER_PRICE_OUTPUT_USD_PER_MTOK"),
+            openrouter_pricing_model=os.environ.get("OPENROUTER_PRICING_MODEL") or None,
+            openrouter_pricing_reference=os.environ.get("OPENROUTER_PRICING_REFERENCE") or None,
             agent_daily_budget_usd=_decimal("AGENT_DAILY_BUDGET_USD"),
             agent_monthly_budget_usd=_decimal("AGENT_MONTHLY_BUDGET_USD"),
             agent_interaction_limit_usd=_decimal("AGENT_INTERACTION_LIMIT_USD"),
