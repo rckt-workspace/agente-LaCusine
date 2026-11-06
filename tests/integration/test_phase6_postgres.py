@@ -239,9 +239,9 @@ def test_migration_runner_applies_once_and_refuses_modified_history(tmp_path):
             conn.execute("create role anon nologin") if not _role_exists("anon") else None
             conn.execute("create role authenticated nologin") if not _role_exists("authenticated") else None
         first = run_migrations(TEST_DATABASE_URL, files, apply=True)
-        assert len(first.applied) == len(files) == 13
+        assert len(first.applied) == len(files) == 17  # 13 publicadas + analítica + eventos/ventas + RLS + presupuesto informes
         second = run_migrations(TEST_DATABASE_URL, files, apply=True)
-        assert second.applied == [] and len(second.up_to_date) == 13
+        assert second.applied == [] and len(second.up_to_date) == 17
 
         # Una copia con un archivo alterado: la herramienta debe negarse, sin tocar el original del repositorio.
         copied = tmp_path / "migrations"

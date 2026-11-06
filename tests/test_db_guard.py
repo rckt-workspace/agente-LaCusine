@@ -4,7 +4,7 @@ import pytest
 
 from tests.integration.db_guard import UnsafeTestDatabaseError, validate_test_database_url
 
-SAFE_URL = "postgresql://lacusine_test_user:fake-local-pass@127.0.0.1:55439/lacusine_test"
+SAFE_URL = "postgresql://lacusine_test_user:clave-sintetica-no-real@127.0.0.1:55439/lacusine_test"
 SAFE_ENV = {"APP_ENV": "test", "LACUSINE_TEST_DB_RESET": "I_UNDERSTAND_THIS_DROPS_PUBLIC_SCHEMA"}
 
 
@@ -100,5 +100,5 @@ def test_error_messages_never_contain_the_password():
 
 def test_unparseable_url_error_does_not_echo_input():
     with pytest.raises(UnsafeTestDatabaseError) as excinfo:
-        validate_test_database_url("postgresql://user:clave-rota@127.0.0.1:notaport/lacusine_test", dict(SAFE_ENV))
+        validate_test_database_url("postgresql://user:clave-sintetica-no-real@127.0.0.1:notaport/lacusine_test", dict(SAFE_ENV))
     assert "clave-rota" not in str(excinfo.value)

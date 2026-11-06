@@ -13,7 +13,10 @@ def test_repository_migrations_load_in_order_with_valid_names():
     files = load_migrations(REPO_MIGRATIONS)
     names = [f.name for f in files]
     assert names == sorted(names)
-    assert len(names) == 13
+    # 13 publicadas + consolidación de analítica (20261105100000) + eventos y ventas comerciales (20261105110000)
+    # + políticas RLS de esas tablas (20261105120000) + presupuesto de informes con IA (20261105130000).
+    assert len(names) == 17
+    assert names[-1] == "20261105130000_business_report_budget.sql"
     assert all(len(f.sha256) == 64 for f in files)
 
 

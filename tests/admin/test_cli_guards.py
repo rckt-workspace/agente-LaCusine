@@ -7,8 +7,8 @@ import pytest
 from app.admin.cli import GuardError, build_parser, check_guards
 
 CASE = "6f1c2a3e-1111-4a2b-9c3d-000000000001"
-LOCAL_ADMIN_URL = "postgresql://lacusine_admin:clave-ficticia@127.0.0.1:55439/lacusine_test"
-APP_URL = "postgresql://lacusine_app:otra-ficticia@127.0.0.1:55439/lacusine_test"
+LOCAL_ADMIN_URL = "postgresql://lacusine_admin:clave-sintetica-no-real@127.0.0.1:55439/lacusine_test"
+APP_URL = "postgresql://lacusine_app:clave-sintetica-no-real@127.0.0.1:55439/lacusine_test"
 
 
 def _args(*argv):
