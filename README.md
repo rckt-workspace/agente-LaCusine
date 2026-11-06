@@ -5,7 +5,8 @@ Agente comercial de WhatsApp para La Cuisine Appliances Colombia (WhatsApp Cloud
 > **Estado (5 de noviembre de 2026):**
 > - **Piloto local validado:** FastAPI + ngrok + Meta WhatsApp Cloud API + Supabase Cloud + Claude Sonnet 5.5 respondiendo consultas comerciales reales con un único worker. Detalles en [`docs/estado-piloto-2026-11-05.md`](docs/estado-piloto-2026-11-05.md) y en el [runbook del piloto](docs/piloto-whatsapp-ngrok-runbook.md).
 > - **Desarrollo pendiente:** errores 400 de envío sin código confirmado, indicador de escritura en pruebas reales, memoria conversacional limitada, multi-línea empresarial no soportada, credenciales de prueba locales en contenido versionado.
-> - **Despliegue productivo: no autorizado.** No hay despliegues en Render, AWS ni producción.
+> - **Cierre de la fase 7.5 (6 de noviembre de 2026):** 994 pruebas unitarias aprobadas y 3 omitidas; pruebas de integración (170 en la fase 7.5) pendientes de repetir con una base PostgreSQL de pruebas; 4 pruebas del frontend y build del panel correctos. Migraciones 1–15 en Supabase Cloud, 16 y 17 pendientes. Plan de activación en [docs/auditoria-migraciones-7-5.md](docs/auditoria-migraciones-7-5.md).
+> - **Despliegue productivo: no autorizado.** No hay despliegues en AWS ni producción. Render solo aloja la demostración con datos sintéticos.
 > - **Arquitectura AWS: prevista, no desplegada.**
 >
 > El webhook persiste eventos de forma idempotente; el worker procesa la cola con leases, orden por contacto, reintentos y presupuesto con reservas. El piloto usa un único worker y un único número de negocio.
@@ -17,11 +18,11 @@ Documentación: [`docs/arquitectura.html`](docs/arquitectura.html) · [`docs/mod
 | Fase | Contenido | Estado |
 |---|---|---|
 | 1 | Webhook con handshake, firma `X-Hub-Signature-256`, límites de tamaño y falla cerrada | Completada |
-| 2 | Migraciones Supabase, RLS, repositorios, deduplicación persistente, importador CSV | Implementada y probada en PostgreSQL local. **Sin aplicar a Supabase real.** |
+| 2 | Migraciones Supabase, RLS, repositorios, deduplicación persistente, importador CSV | Implementada y probada en PostgreSQL local. Migraciones 1–15 en Supabase Cloud; 16 y 17 **pendientes de autorización** ([plan](docs/auditoria-migraciones-7-5.md)). |
 | 3 | Motor comercial de IA, búsqueda de productos, adaptador Anthropic, control de costos, importador XLSX | Implementada y probada con proveedor simulado. **Sin llamadas reales.** |
 | 4 | Worker y cola persistente, outbox de respuestas, reservas presupuestarias, transferencias y retención segura | Implementada y probada contra PostgreSQL local. Sin envío. Detalle en [docs/worker.md](docs/worker.md). |
 | 5 | Adaptador WhatsApp Cloud API, dispatcher de salidas, estados de entrega y ventana de 24 h | Implementada y probada con transporte simulado. **Envío real desactivado.** Ver [whatsapp-integration.md](docs/whatsapp-integration.md). |
-| 6 | Entorno local en Docker, Supabase licenciado, AWS y piloto controlado | Local completo en Docker. Render descartado. **Sin desplegar. Requiere autorización explícita.** Ver [go-live-checklist.md](docs/go-live-checklist.md). |
+| 6 | Entorno local en Docker, Supabase licenciado, AWS y piloto controlado | Local completo en Docker. Panel, informes, ventas y analítica implementados (fase 7.5). **Sin desplegar. Requiere autorización explícita.** Ver [go-live-checklist.md](docs/go-live-checklist.md) y la [operación](docs/piloto-whatsapp-ngrok-runbook.md). |
 
 ## Worker y procesamiento confiable (Fase 4)
 
@@ -187,8 +188,8 @@ Las pruebas que dependen de la base de datos exigen `TEST_DATABASE_URL`; la cont
 
 - **Envío:** `WHATSAPP_DRY_RUN=true` y `META_SEND_ENABLED=false` por defecto. Con ambos desactivados no sale ninguna solicitud a Meta.
 - **Configuración local:** copie `.env.example` a `.env` y active `LACUSINE_LOAD_DOTENV=true` solo en su máquina. Render no usa `.env`.
-- **Despliegue:** Render queda descartado (ver [render-deployment.md](docs/render-deployment.md)). La arquitectura futura es AWS, sin recursos creados: [aws-architecture.md](docs/aws-architecture.md). Entorno local: [local-development.md](docs/local-development.md).
-- **Base de datos:** trece migraciones en orden (la 11 añade roles de mínimo privilegio con RLS; la 12, atribución de anuncios y avisos a asesores; la 13, lectura de avisos para la administración), sin aplicar a Supabase Cloud. Ver [supabase-deployment.md](docs/supabase-deployment.md).
+- **Despliegue:** Render solo aloja la demostración con datos sintéticos ([render-free-demo.md](docs/render-free-demo.md)); el backend permanente no está desplegado. La arquitectura prevista es AWS, sin recursos creados: [aws-architecture.md](docs/aws-architecture.md). Entorno local: [local-development.md](docs/local-development.md).
+- **Base de datos:** diecisiete migraciones en orden. Las de la 1 a la 13 cubren núcleo, RLS, roles de mínimo privilegio, atribución y avisos. Las 14 y 15 (analítica y comercial) están en Supabase Cloud sin registro en `schema_migrations`; la 16 (políticas RLS comerciales) y la 17 (presupuesto de informes) están pendientes. Ver [supabase-deployment.md](docs/supabase-deployment.md) y [auditoria-migraciones-7-5.md](docs/auditoria-migraciones-7-5.md).
 - **Variables:** ver [environment-variables.md](docs/environment-variables.md).
 - **Puerta de salida:** ver [go-live-checklist.md](docs/go-live-checklist.md). Ninguna casilla de producción está marcada.
 
@@ -214,10 +215,27 @@ Las pruebas que dependen de la base de datos exigen `TEST_DATABASE_URL`; la cont
 - **Catálogo:** procedimiento en [catalogo-operacion.md](docs/catalogo-operacion.md). Sin importación automática.
 - **Piloto local (ejecutado el 5/11/2026):** arranque y verificación en [piloto-whatsapp-ngrok-runbook.md](docs/piloto-whatsapp-ngrok-runbook.md) y estado en [estado-piloto-2026-11-05.md](docs/estado-piloto-2026-11-05.md). El procedimiento de Render y los criterios GO / NO-GO de [operacion-piloto.md](docs/operacion-piloto.md) siguen sin ejecutarse.
 
+## Operación y entornos (cierre de la fase 7.5)
+
+Procedimiento completo en el [runbook del piloto](docs/piloto-whatsapp-ngrok-runbook.md). Resumen:
+
+| Tarea | Sección del runbook |
+|-------|---------------------|
+| Diferencias entre desarrollo, piloto y producción | 15 |
+| Arrancar y detener FastAPI, ngrok y el worker | 4, 5, 10, 14 y 16 |
+| Levantar el panel (`frontend`, build y `/admin`) | 17 |
+| Consultar mensajes, conversaciones y errores | 18 |
+| Generar los cinco informes en PDF | 19 |
+| Confirmar y cancelar una venta | 20 |
+| Verificar permisos | 9 y 21 |
+| Línea pública empresarial (cuando exista) | 22 |
+| Despliegue permanente del backend | 23 |
+
 ## Pendiente (no implementado, sin autorización)
 
-- **Aplicar migraciones a Supabase real** (incluidas las de las fases 4 y 5.1): requiere autorización y un plan de cambio.
-- **Rol de base de datos del backend y rol administrativo** con privilegios mínimos (fuera del repositorio).
+- **Aplicar las migraciones 16 y 17 a Supabase Cloud**: requiere autorización, copia de seguridad y el plan de [auditoria-migraciones-7-5.md](docs/auditoria-migraciones-7-5.md), sección 6.
+- **Reconciliar `schema_migrations` en Cloud** (migraciones 1–15): requiere decisión humana. El runner no debe ejecutarse con `--apply` contra Cloud antes.
+- **Roles de login en Cloud:** `lacusine_backend` y `lacusine_admin_ops` ya tienen privilegios según la auditoría; sus contraseñas se gestionan fuera del repositorio.
 - **Notificación a asesores** (correo, WhatsApp o Teams): hoy solo se registra la solicitud.
 - **Importar el catálogo a Supabase**: requiere la aprobación de LCA y el procedimiento de [catalogo-operacion.md](docs/catalogo-operacion.md).
 - **Varias líneas de negocio:** requiere cambiar el esquema de leads (ver [whatsapp-integration.md](docs/whatsapp-integration.md)).

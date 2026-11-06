@@ -227,3 +227,120 @@ Para soportarlo harían falta cambios de esquema (identidad de lead por línea),
 - [ ] URL de ngrok actualizada en Meta.
 - [ ] `pilot_workers.py list` sin workers antes de arrancar.
 - [ ] Un solo worker tras `pilot_start.ps1 -Start`.
+
+---
+
+## 15. Entornos: desarrollo, piloto y producción
+
+| Aspecto | Desarrollo (local) | Piloto (este runbook) | Producción (no existe) |
+|---------|--------------------|-----------------------|------------------------|
+| Base de datos | PostgreSQL local (`docker-compose.yml`) o desechable para pruebas (`docker-compose.test.yml`) | Supabase Cloud, con migraciones reconciliadas | Supabase con copia de seguridad, plan de cambio y ventana |
+| `LACUSINE_ENVIRONMENT` / `--environment` | `local` o `test` | `pilot` | `production` (reservado; sin uso hasta autorizar) |
+| Envío a WhatsApp | Desactivado (`WHATSAPP_DRY_RUN=true`, `META_SEND_ENABLED=false`) | Activo solo al número de prueba, con destinatarios verificados | Número empresarial, plantillas aprobadas por Meta |
+| LLM | Sin llamadas reales | Anthropic real con presupuesto diario | Anthropic real con presupuesto mensual y tarifas verificadas |
+| Exposición HTTP | `127.0.0.1` | ngrok (HTTPS temporal) | Dominio propio con TLS y balanceador |
+| Procesos | API y worker a mano | Un solo worker (`pilot_start.ps1`) | Servicio gestionado con reinicio automático y un único worker |
+| Panel | `npm run dev` o `frontend/dist` | `frontend/dist` servido en `/admin` | Igual, con secretos en el panel de la plataforma |
+| Datos | Sintéticos | Datos reales de la cuenta de prueba | Datos reales; respaldos y retención verificados |
+
+Regla general: nada de esta tabla pasa de desarrollo a piloto ni de piloto a producción sin el cambio autorizado correspondiente.
+
+## 16. Arrancar y detener FastAPI, ngrok y el worker
+
+- **FastAPI:** sección 4 (`uvicorn app.main:app --host 127.0.0.1 --port 18011`). Comprobar `GET /health` y `GET /ready`.
+- **ngrok:** sección 5, apuntando a `18011`. Actualizar la URL en Meta si cambia (sección 7).
+- **Worker:** sección 10. Solo `scripts\pilot_start.ps1 -Start` lo arranca. No lanzar `python -m app.worker.main` a mano en el piloto: el script comprueba que exista exactamente uno.
+- **Parar:** sección 14. Primero el worker, luego FastAPI y ngrok. El worker termina de forma verificada.
+- **Estado del worker:** `.\.venv\Scripts\python.exe scripts\pilot_workers.py list --repo .`
+
+## 17. Levantar el dashboard
+
+El panel React vive en `frontend/` y lo sirve FastAPI en `/admin` cuando hay base de datos y configuración de Supabase Auth (`SUPABASE_URL` y `SUPABASE_JWKS_URL`). Si falta algo, la ruta no existe.
+
+Compilar y servir (piloto):
+
+```powershell
+cd frontend
+npm ci
+npm test            # 4 pruebas de formato
+npm run build       # genera frontend\dist (ignorado por git)
+cd ..
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 18011
+# Abrir http://127.0.0.1:18011/admin
+```
+
+Desarrollo con recarga: `npm run dev` en `frontend/`. Vite reenvía `/api` a FastAPI. Si FastAPI no usa el puerto 18000, defina `LACUSINE_API_PORT=18011` antes de arrancar. `VITE_SUPABASE_URL` y `VITE_SUPABASE_PUBLISHABLE_KEY` van en `frontend/.env` (ignorado por git).
+
+El inicio de sesión usa Supabase Auth. El rol sale de `app_metadata.role` (`operator` o `admin`), que solo un administrador de Supabase puede escribir.
+
+## 18. Consultar mensajes, conversaciones y errores
+
+Desde el panel, las páginas son **Conversaciones**, **Leads**, **Analítica** y **Configuración**. Son de solo lectura salvo las acciones de pausa, reanudación y asignación de asesor.
+
+Desde la línea de comandos, con solo lectura:
+
+```powershell
+.\.venv\Scripts\python.exe -m app.admin.cli --environment pilot --operator "<nombre de quien revisa>" status
+.\.venv\Scripts\python.exe -m app.admin.cli --environment pilot --operator "<nombre>" inspect --type webhook_event --id <uuid>
+.\.venv\Scripts\python.exe -m app.admin.cli --environment pilot --operator "<nombre>" audit --type outbound_message --id <uuid>
+```
+
+- `status` da conteos por estado. `inspect` muestra metadatos. `audit` muestra las intervenciones previas.
+- Errores de Meta: consulte la sección 9 (códigos 190/463 y 131030). Los logs del worker van a `logs\worker-<fecha>.err.log`.
+
+Resolver casos inciertos (`resolve-event`, `resolve-outbound`, `resolve-reservation`, `resolve-handoff`, `resume-conversation`) exige `--id`, `--confirm` con el mismo identificador y `--reason`. Según el caso añade `--to`, `--evidence` o `--actual-usd`. Cada resolución queda en auditoría.
+
+## 19. Generar los cinco informes
+
+Los informes son PDF de una **semana comercial**, de lunes 00:00 a lunes siguiente 00:00 (hora de Bogotá). La fecha indicada cae en la semana que la contiene. Tipos: `operativo`, `marketing`, `oportunidades`, `ventas` y `ejecutivo`.
+
+- **Desde el panel:** página **Inteligencia comercial**. Elegir el tipo y la fecha y pulsar **Generar PDF**. El tipo ejecutivo admite narrativa con IA solo si `ANALYSIS_AI_ENABLED` está activo y la migración 17 está aplicada.
+- **Desde la API** (rol `operator`):
+
+```
+GET /api/admin/commercial/report.pdf?kind=operativo&day=2026-11-02
+GET /api/admin/commercial/report.csv?day=2026-11-02      (informe semanal en CSV)
+```
+
+Respuesta 413 si el PDF es demasiado grande, 503 si el almacenamiento no responde y 500 `pdf_generation_failed` sin detalle interno.
+
+## 20. Confirmar y cancelar una venta
+
+Solo el rol `admin` puede confirmar o cancelar. Desde **Inteligencia comercial → Confirmar venta** en el panel, o por API:
+
+```
+POST /api/admin/commercial/sales
+{
+  "sale_ref": "VTA-0001",            (3 a 100 caracteres, único)
+  "lead_id": "<uuid del lead>",
+  "amount_cop": 85000,
+  "sold_at": "2026-11-06T15:00:00-05:00",
+  "source": "admin_manual",           (o "external_order_system")
+  "evidence_ref": "<referencia verificable: factura, pedido o wamid>",
+  "products": { "<uuid de producto>": 2 }
+}
+
+POST /api/admin/commercial/sales/{sale_ref}/cancel
+{ "reason": "motivo de al menos 5 caracteres" }
+```
+
+Una venta confirmada cuenta en los informes de **ventas** y **ejecutivo**. Cancelar no borra la venta: el cambio queda como evento en el historial de estados (solo-anexar). Códigos: 409 si la venta ya existe o no admite ese cambio, 422 si falta un dato válido, 403 si el rol no es `admin`.
+
+## 21. Verificar permisos
+
+- Sección 9: permisos de Meta, token permanente y números de prueba.
+- Rol de base de datos: la aplicación debe conectarse con `lacusine_backend` y nunca con el propietario del esquema. Las consultas de comprobación de privilegios están en `docs/auditoria-migraciones-7-5.md`, sección 6.6.
+- Rol del panel: `operator` ve informes y conversaciones; `admin` además confirma y cancela ventas y resuelve casos.
+- Ninguna comprobación de permisos envía mensajes ni consume presupuesto de IA.
+
+## 22. Línea pública empresarial (cuando exista)
+
+No está activa. El procedimiento, incluidos los requisitos de Meta, la verificación del negocio, las plantillas y el cambio de esquema para varias líneas, está en [whatsapp-publico-activacion.md](whatsapp-publico-activacion.md). El piloto acepta una sola línea (escenario B de este runbook).
+
+## 23. Desplegar el backend de forma permanente
+
+Estado: **no desplegado**. Ninguna opción se ejecuta sin autorización, copia de seguridad verificada y el plan de cambio de [auditoria-migraciones-7-5.md](auditoria-migraciones-7-5.md), sección 6.
+
+- **Render:** `render.yaml` y [render-free-demo.md](render-free-demo.md) son solo para la demostración con datos sintéticos (`DEMO_ENABLED`). No son el backend de producción.
+- **AWS:** la arquitectura prevista está en [aws-architecture.md](aws-architecture.md). No hay recursos creados.
+- Antes de cualquier despliegue: un solo worker, `META_SEND_ENABLED` decidido por el responsable, migraciones 1–17 registradas, secretos en el gestor de la plataforma (nunca en el repositorio) y la lista de [go-live-checklist.md](go-live-checklist.md) completa.
