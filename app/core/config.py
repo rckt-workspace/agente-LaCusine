@@ -75,6 +75,21 @@ class Settings:
     whatsapp_allowed_recipients: tuple[str, ...] = ()
     whatsapp_timeout_seconds: float = 10.0
     whatsapp_max_concurrency: int = 2
+    # Audiencia de envío. test_allowlist (por defecto): solo WHATSAPP_ALLOWED_RECIPIENTS.
+    # public: cualquier contacto que escriba primero a la línea registrada, solo con confirmación explícita.
+    whatsapp_audience_mode: str = "test_allowlist"
+    whatsapp_public_confirmation: str | None = None
+    # Límites de frecuencia por conversación (mensajes entrantes). Protegen los créditos de IA frente a abuso.
+    contact_max_inbound_per_hour: int = 20
+    contact_max_inbound_per_day: int = 60
+    # Análisis narrativo opcional con IA para informes. Desactivado por defecto; presupuesto propio por informe.
+    analysis_ai_enabled: bool = False
+    analysis_ai_max_output_tokens: int = 400
+    analysis_ai_budget_usd_per_report: Decimal = Decimal("0.02")
+    analysis_ai_timeout_seconds: float = 20.0
+    # Presupuesto acumulado de informes (separado del agente comercial). None = sin límite de ese tipo.
+    analysis_ai_daily_budget_usd: Decimal | None = Decimal("0.10")
+    analysis_ai_monthly_budget_usd: Decimal | None = Decimal("1.00")
 
     # Agente y Claude. Por defecto todo deshabilitado.
     # LLM_PROVIDER: fake | anthropic | openrouter. None = comportamiento histórico (Anthropic si está habilitado).
@@ -88,6 +103,11 @@ class Settings:
     anthropic_max_retries: int = 1
     anthropic_max_concurrency: int = 2
     anthropic_prompt_caching: bool = False
+    # Tarifas de Anthropic válidas SOLO para este modelo. Sin coincidencia con ANTHROPIC_MODEL no hay llamada real.
+    anthropic_pricing_model: str | None = None
+    # Esfuerzo y pensamiento: None = no se envía el parámetro (comportamiento por defecto del modelo).
+    anthropic_effort: str | None = None
+    anthropic_thinking: str | None = None
     agent_kill_switch: bool = False
     demo_enabled: bool = False  # solo para la demostración en entorno aislado. Nunca en producción.
     demo_token: str | None = field(default=None, repr=False)
@@ -115,6 +135,11 @@ class Settings:
     openrouter_pricing_model: str | None = None
     openrouter_pricing_reference: str | None = None
 
+    # Panel administrativo: autenticación con Supabase Auth (JWT verificado con las claves públicas JWKS).
+    # Sin SUPABASE_URL o SUPABASE_JWKS_URL el panel no se monta y las rutas no existen.
+    supabase_url: str | None = None
+    supabase_jwks_url: str | None = None
+
     # Presupuestos en USD estimados. None = sin límite de ese tipo (no recomendado en producción).
     agent_daily_budget_usd: Decimal | None = None
     agent_monthly_budget_usd: Decimal | None = None
@@ -136,6 +161,16 @@ class Settings:
             whatsapp_allowed_recipients=_csv("WHATSAPP_ALLOWED_RECIPIENTS"),
             whatsapp_timeout_seconds=_float("WHATSAPP_TIMEOUT_SECONDS", 10.0),
             whatsapp_max_concurrency=_int("WHATSAPP_MAX_CONCURRENCY", 2),
+            whatsapp_audience_mode=(os.environ.get("WHATSAPP_AUDIENCE_MODE") or "test_allowlist").strip().lower(),
+            whatsapp_public_confirmation=os.environ.get("WHATSAPP_PUBLIC_CONFIRMATION") or None,
+            contact_max_inbound_per_hour=_int("CONTACT_MAX_INBOUND_PER_HOUR", 20),
+            contact_max_inbound_per_day=_int("CONTACT_MAX_INBOUND_PER_DAY", 60),
+            analysis_ai_enabled=_bool("ANALYSIS_AI_ENABLED", False),
+            analysis_ai_max_output_tokens=_int("ANALYSIS_AI_MAX_OUTPUT_TOKENS", 400),
+            analysis_ai_budget_usd_per_report=_decimal("ANALYSIS_AI_BUDGET_USD_PER_REPORT") or Decimal("0.02"),
+            analysis_ai_timeout_seconds=_float("ANALYSIS_AI_TIMEOUT_SECONDS", 20.0),
+            analysis_ai_daily_budget_usd=_decimal("ANALYSIS_AI_DAILY_BUDGET_USD") or Decimal("0.10"),
+            analysis_ai_monthly_budget_usd=_decimal("ANALYSIS_AI_MONTHLY_BUDGET_USD") or Decimal("1.00"),
             llm_provider=(os.environ.get("LLM_PROVIDER") or "").strip().lower() or None,
             anthropic_enabled=_bool("ANTHROPIC_ENABLED", False),
             agent_dry_run=_bool("AGENT_DRY_RUN", True),
@@ -146,6 +181,9 @@ class Settings:
             anthropic_max_retries=_int("ANTHROPIC_MAX_RETRIES", 1),
             anthropic_max_concurrency=_int("ANTHROPIC_MAX_CONCURRENCY", 2),
             anthropic_prompt_caching=_bool("ANTHROPIC_PROMPT_CACHING", False),
+            anthropic_pricing_model=os.environ.get("ANTHROPIC_PRICING_MODEL") or None,
+            anthropic_effort=os.environ.get("ANTHROPIC_EFFORT") or None,
+            anthropic_thinking=os.environ.get("ANTHROPIC_THINKING") or None,
             agent_kill_switch=_bool("AGENT_KILL_SWITCH", False),
             demo_enabled=_bool("DEMO_ENABLED", False),
             demo_token=os.environ.get("DEMO_TOKEN") or None,
@@ -170,4 +208,6 @@ class Settings:
             agent_daily_budget_usd=_decimal("AGENT_DAILY_BUDGET_USD"),
             agent_monthly_budget_usd=_decimal("AGENT_MONTHLY_BUDGET_USD"),
             agent_interaction_limit_usd=_decimal("AGENT_INTERACTION_LIMIT_USD"),
+            supabase_url=(os.environ.get("SUPABASE_URL") or "").strip().rstrip("/") or None,
+            supabase_jwks_url=os.environ.get("SUPABASE_JWKS_URL") or None,
         )

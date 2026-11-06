@@ -22,3 +22,7 @@ __pycache__/
 *.xlsm
 *.pdf
 *.csv
+
+# Frontend: dependencias y compilación regenerables
+frontend/node_modules/
+frontend/dist/

@@ -70,11 +70,14 @@ Si una variable no está definida, el sistema se comporta así:
 | `ANTHROPIC_MODEL` | Con llamadas activas | No | Modelo elegido por el equipo. Candidato verificado el 28/10/2026: `claude-haiku-5-5`. |
 | `ANTHROPIC_MAX_OUTPUT_TOKENS`, `ANTHROPIC_TIMEOUT_SECONDS`, `ANTHROPIC_MAX_RETRIES`, `ANTHROPIC_MAX_CONCURRENCY` | No | No | Límites de la llamada. |
 | `ANTHROPIC_PRICING_REFERENCE` | No | No | Texto que identifica la fuente de las tarifas en los registros. |
+| `ANTHROPIC_PRICING_MODEL` | Sí, con tarifas | No | Modelo al que pertenecen las tarifas. Debe ser igual a `ANTHROPIC_MODEL`; si no, no hay llamada. |
 | `ANTHROPIC_PRICE_*_USD_PER_MTOK` | Con llamadas activas | No | Tarifas por millón de tokens. Revisar antes de cada presupuesto. |
 | `AGENT_DAILY_BUDGET_USD`, `AGENT_MONTHLY_BUDGET_USD`, `AGENT_INTERACTION_LIMIT_USD` | Recomendadas | No | Presupuestos estimados. |
 | `AGENT_KILL_SWITCH` | No | No | Apagado de emergencia. |
 | `AGENT_MAX_INPUT_CHARS`, `AGENT_MAX_CONTEXT_CHARS` | No | No | Límites de entrada y de contexto. |
 | `ANTHROPIC_PROMPT_CACHING` | No | No | Desactivado. Ver [agente-ia.md](agente-ia.md). |
+| `ANTHROPIC_EFFORT` | No | No | Esfuerzo de respuesta: `low`, `medium`, `high`, `xhigh` o `max`. Vacío = no se envía. Con `between_tools`, solo `low`, `medium` o `high`. |
+| `ANTHROPIC_THINKING` | No | No | `between_tools` (solo `claude-sonnet-5-5`) o `adaptive`. Vacío = no se envía. `enabled` y `disabled` no se admiten. |
 
 ### Worker
 
