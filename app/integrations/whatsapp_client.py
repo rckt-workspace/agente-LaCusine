@@ -29,6 +29,7 @@ GRAPH_HOST = "https://graph.facebook.com"
 MAX_TEXT_CHARS = 4096
 WA_ID_PATTERN = re.compile(r"^[0-9]{6,20}$")
 PHONE_ID_PATTERN = re.compile(r"^[0-9]{6,32}$")
+TYPING_MESSAGE_ID_PATTERN = re.compile(r"^wamid\.[A-Za-z0-9+/=_.-]{1,200}$")
 
 
 class WhatsAppError(Exception):
@@ -135,7 +136,11 @@ class CloudApiSender:
         timeout_seconds: float = 10.0,
         max_concurrency: int = 2,
         client: httpx.Client | None = None,
+        audience_mode: str = "test_allowlist",
     ) -> None:
+        if audience_mode not in ("test_allowlist", "public"):
+            raise SendConfigError("audience_mode_unknown")
+        self._audience = audience_mode
         missing = [
             name for name, value in (
                 ("META_ACCESS_TOKEN", access_token),
@@ -146,7 +151,7 @@ class CloudApiSender:
         if send_enabled and not dry_run:
             if missing:
                 raise SendConfigError("missing:" + ",".join(missing))
-            if not allowed_recipients:
+            if audience_mode == "test_allowlist" and not allowed_recipients:
                 raise SendConfigError("recipients_allowlist_empty")
             if not PHONE_ID_PATTERN.match(phone_number_id or ""):
                 raise SendConfigError("phone_number_id_format")
@@ -167,7 +172,7 @@ class CloudApiSender:
         if not self._enabled:
             raise SendDisabledError()
         validate_request(request)
-        if request.to not in self._allowed:
+        if self._audience == "test_allowlist" and request.to not in self._allowed:
             raise RecipientNotAllowedError()
         if request.business_phone_id != self._phone_number_id:
             raise BusinessNumberMismatchError()
@@ -175,6 +180,43 @@ class CloudApiSender:
             raise BusyError()
         try:
             return self._post(request)
+        finally:
+            self._semaphore.release()
+
+    def show_typing(self, to: str, inbound_message_id: str) -> None:
+        """Marca como leído el mensaje recibido y muestra 'escribiendo...' (API oficial de Meta).
+
+        Solo con envío habilitado y destinatario permitido. Cualquier fallo lanza WhatsAppError: quien llama
+        lo ignora, porque el indicador nunca debe impedir la respuesta comercial.
+        """
+        if not self._enabled:
+            raise SendDisabledError()
+        if not WA_ID_PATTERN.match(to or ""):
+            raise PayloadRejectedError("recipient_format")
+        if self._audience == "test_allowlist" and to not in self._allowed:
+            raise RecipientNotAllowedError()
+        if not TYPING_MESSAGE_ID_PATTERN.match(inbound_message_id or ""):
+            raise PayloadRejectedError("typing_message_id")
+        if not self._semaphore.acquire(timeout=self._timeout):
+            raise BusyError()
+        try:
+            url = f"{GRAPH_HOST}/{self._version}/{self._phone_number_id}/messages"
+            body = {
+                "messaging_product": "whatsapp",
+                "status": "read",
+                "message_id": inbound_message_id,
+                "typing_indicator": {"type": "text"},
+            }
+            headers = {"Authorization": f"Bearer {self._token}"}
+            try:
+                response = self._client.post(url, json=body, headers=headers)
+            except httpx.HTTPError:
+                raise WhatsAppError("typing_transport") from None
+            if response.status_code != 200:
+                info = parse_meta_error(response)
+                _log_rejection("typing", info)
+                raise MetaRejectedError(f"typing_{info.specific_code()}")
+            logger.info("whatsapp_typing_accepted http=%d", response.status_code)
         finally:
             self._semaphore.release()
 
@@ -214,14 +256,93 @@ class CloudApiSender:
             logger.info("whatsapp_send_accepted http=%d", status)
             return SendResult(message_id=message_id, http_status=status)
         if status == 429:
-            raise RateLimitedError()
+            raise RateLimitedError("http_429")
+        info = parse_meta_error(response)
         if status in (401, 403):
-            raise AuthRejectedError()
+            # Token caducado o revocado (p. ej. código 190). Se registra el código de Meta, nunca el token.
+            _log_rejection("send", info)
+            logger.error("meta_auth_rejected http=%d hint=renovar_META_ACCESS_TOKEN", status)
+            raise AuthRejectedError(info.specific_code())
         if status >= 500:
+            _log_rejection("send", info)
             raise UncertainSendError(f"http_{status}")
-        if status == 400:
-            raise MetaRejectedError("http_400")
-        raise MetaRejectedError(f"http_{status}")
+        _log_rejection("send", info)
+        if info.code in RETRYABLE_META_CODES:
+            raise RateLimitedError(info.specific_code())
+        raise MetaRejectedError(info.specific_code())
+
+
+# Códigos de Meta que la documentación describe como transitorios: se reintentan con backoff.
+# 130429 (límite de rendimiento), 131056 (demasiados mensajes al mismo número en poco tiempo), 80007 ("try again later").
+RETRYABLE_META_CODES = frozenset({130429, 131056, 80007})
+_DETAILS_MAX_CHARS = 160
+_BEARER_OR_TOKEN = re.compile(r"(Bearer\s+\S+|EAA[A-Za-z0-9_-]{10,})")
+_LONG_DIGITS = re.compile(r"\d{7,}")
+
+
+@dataclass(frozen=True)
+class MetaErrorInfo:
+    """Error de Meta sin datos sensibles: nunca incluye el token, el cuerpo del mensaje ni números completos."""
+
+    http_status: int
+    code: int | None
+    error_type: str | None
+    subcode: int | None
+    details: str | None
+    fbtrace_id: str | None
+
+    def specific_code(self) -> str:
+        """Código interno que conserva el identificador específico de Meta (no se sustituye por http_400)."""
+        return f"meta_{self.code}" if self.code is not None else f"http_{self.http_status}"
+
+
+def redact_details(text: str | None) -> str | None:
+    if not text:
+        return None
+    cleaned = _BEARER_OR_TOKEN.sub("[redactado]", text)
+    cleaned = _LONG_DIGITS.sub("[numero]", cleaned)
+    return cleaned[:_DETAILS_MAX_CHARS]
+
+
+def parse_meta_error(response: httpx.Response) -> MetaErrorInfo:
+    """Extrae response.json()["error"]. Si el cuerpo no es JSON o falta el error, devuelve campos vacíos."""
+    try:
+        data = response.json()
+    except ValueError:
+        data = None
+    error = data.get("error") if isinstance(data, dict) else None
+    if not isinstance(error, dict):
+        error = {}
+    error_data = error.get("error_data") if isinstance(error.get("error_data"), dict) else {}
+    details = error_data.get("details") or error.get("message")
+    return MetaErrorInfo(
+        http_status=response.status_code,
+        code=_int_or_none(error.get("code")),
+        error_type=_text_or_none(error.get("type")),
+        subcode=_int_or_none(error.get("error_subcode")),
+        details=redact_details(details if isinstance(details, str) else None),
+        fbtrace_id=_text_or_none(error.get("fbtrace_id")),
+    )
+
+
+def _log_rejection(operation: str, info: MetaErrorInfo) -> None:
+    logger.warning(
+        "meta_api_rejected operation=%s http=%d code=%s type=%s subcode=%s fbtrace_id=%s details=%s",
+        operation, info.http_status, info.code if info.code is not None else "-",
+        info.error_type or "-", info.subcode if info.subcode is not None else "-",
+        info.fbtrace_id or "-", info.details or "-",
+    )
+
+
+def _int_or_none(value) -> int | None:
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _text_or_none(value) -> str | None:
+    return value[:80] if isinstance(value, str) and value else None
 
 
 def _message_id(response: httpx.Response) -> str | None:

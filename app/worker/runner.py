@@ -82,6 +82,9 @@ class Worker:
         """Un ciclo. Devuelve cuántos trabajos se reclamaron."""
         try:
             recovered = self._jobs.recover_expired(self._settings.max_attempts)
+            if recovered:
+                # Trabajos de una ejecución anterior interrumpida: vuelven a cola con su intento contado.
+                logger.warning("worker_recovered_expired count=%d", recovered)
             with self._lock:
                 self.metrics.recovered_expired += recovered
             claims = self._jobs.claim(self._settings.batch_size, self._token_factory)

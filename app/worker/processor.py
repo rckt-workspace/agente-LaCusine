@@ -15,14 +15,18 @@ Reglas de esta fase:
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Callable
 
 from app.agent.orchestrator import AgentOutcome, OutcomeStatus
-from app.agent.safety import SAFE_REPLY_HUMAN
+from app.services.commercial import OutcomeSignals, events_from_outcome
+from app.agent.safety import SAFE_REPLY_HUMAN, SAFE_REPLY_RETRY
 from app.agent.schemas import LeadStage
 from app.models.referral import sanitize_referral
+
+logger = logging.getLogger("lacusine.worker")
 from app.repositories.jobs import Claim
 from app.repositories.outbound import META_STATUSES
 from app.worker.errors import ManualReviewRequired, PermanentJobError
@@ -66,11 +70,17 @@ class EventProcessor:
         expected_business_phone_id: str,
         outbound=None,
         clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+        typing=None,
+        contact_limits: tuple[int, int] | None = None,
+        commercial=None,
     ) -> None:
         if not expected_business_phone_id:
             raise ValueError("expected_business_phone_id_required")
         self._expected_line = expected_business_phone_id
         self._outbound = outbound
+        self._typing = typing  # None en dry-run o sin proveedor real: nunca se muestra "escribiendo..."
+        self._contact_limits = contact_limits  # (por hora, por día); None = sin límite
+        self._commercial = commercial  # registro de eventos comerciales; None = desactivado
         self._agent = agent
         self._leads = leads
         self._conversations = conversations
@@ -115,7 +125,17 @@ class EventProcessor:
         if not renew():
             return ProcessResult(status="lease_lost")
 
+        if self._contact_limits is not None and self._over_contact_limit(conversation_id, now):
+            # Abuso o consumo excesivo: no se responde ni se llama a la IA. Queda registrado el motivo.
+            logger.warning("contact_rate_limited event=%s", claim.event_id)
+            return self._persist(claim, conversation_id, lead_id, None, None, now, ignored_reason="contact_rate_limited")
+
+        if self._typing is not None:
+            # Se muestra solo al iniciar una respuesta real. Un fallo no cambia el resultado.
+            self._typing.start(conversation_id, contact, claim.external_event_id)
+
         outcome: AgentOutcome = self._agent.handle(conversation_id, body, claim.external_event_id)
+        self._record_commercial(claim, conversation_id, lead_id, outcome, now)
         return self._apply_outcome(claim, conversation_id, lead_id, outcome, now)
 
     def _check_business_line(self, claim: Claim) -> None:
@@ -136,6 +156,8 @@ class EventProcessor:
         if result == "unmatched":
             return ProcessResult(status="retry", error_code="status_unmatched", retry=True)
         if result == "applied":
+            # Estado que Meta confirma para una respuesta ya enviada (sent, delivered, read, failed).
+            logger.info("reply_status_from_meta status=%s", status)
             return ProcessResult(status="processed", error_code=status)
         return ProcessResult(status="ignored", error_code="no_transition")
 
@@ -150,7 +172,7 @@ class EventProcessor:
             if outcome.billed_state == "not_billed" and code in ("rate_limited", "busy"):
                 return ProcessResult(status="retry", error_code=code, retry=True)
             if code == "disabled":
-                return self._hand_off(claim, conversation_id, lead_id, "agent_unavailable", now)
+                return self._recoverable(claim, conversation_id, lead_id, "agent_unavailable", now)
             if code == "auth_failed":
                 raise PermanentJobError("provider_auth_failed")
             # Resultado incierto (timeout, 5xx, conexión): no se reenvía automáticamente.
@@ -159,11 +181,15 @@ class EventProcessor:
         if status is OutcomeStatus.SUPPRESSED_HUMAN_CONTROL:
             return self._persist(claim, conversation_id, lead_id, None, None, now, ignored_reason="human_control")
 
+        # Errores recuperables: mensaje neutro, sin transferencia permanente ni pausa de la conversación.
         if status is OutcomeStatus.DISABLED:
-            return self._hand_off(claim, conversation_id, lead_id, "agent_unavailable", now)
+            return self._recoverable(claim, conversation_id, lead_id, "agent_unavailable", now)
 
         if status is OutcomeStatus.BUDGET_BLOCKED:
-            return self._hand_off(claim, conversation_id, lead_id, "budget_blocked", now)
+            return self._recoverable(claim, conversation_id, lead_id, "budget_blocked", now)
+
+        if status is OutcomeStatus.INVALID_OUTPUT:
+            return self._recoverable(claim, conversation_id, lead_id, outcome.error_code or "invalid_output", now)
 
         if status is OutcomeStatus.DUPLICATE_SKIPPED:
             return self._persist(claim, conversation_id, lead_id, None, None, now, ignored_reason="already_answered")
@@ -176,10 +202,33 @@ class EventProcessor:
                                  kind="handoff_notice", error_code="handoff")
         return self._persist(claim, conversation_id, lead_id, lead_status, outcome.reply_text, now)
 
-    def _hand_off(self, claim, conversation_id, lead_id, code: str, now) -> ProcessResult:
-        self._handoffs.open(conversation_id, "other", "normal")
-        return self._persist(claim, conversation_id, lead_id, LEAD_STATUS_BY_STAGE[LeadStage.HUMAN_REQUIRED],
-                             SAFE_REPLY_HUMAN, now, kind="handoff_notice", error_code=code)
+    def _record_commercial(self, claim, conversation_id, lead_id, outcome, now: datetime) -> None:
+        """Eventos comerciales derivados de señales del backend. Nunca bloquea ni altera la respuesta al cliente."""
+        if self._commercial is None or outcome.status not in (OutcomeStatus.REPLIED, OutcomeStatus.HANDOFF_ONLY):
+            return
+        try:
+            stage = outcome.lead_stage.value if outcome.lead_stage is not None else None
+            signals = OutcomeSignals(lead_stage=stage, handoff_reason=outcome.handoff_reason,
+                                     product_ids=tuple(outcome.product_ids))
+            for event in events_from_outcome(signals, claim.external_event_id):
+                self._commercial.record_event(
+                    event_type=event.event_type, occurred_at=now, lead_id=lead_id, dedupe_key=event.dedupe_key,
+                    conversation_id=conversation_id, category=event.category, product_id=event.product_id,
+                    budget_cop=event.budget_cop, source_event_id=claim.external_event_id,
+                )
+        except Exception as exc:  # noqa: BLE001 - la analítica nunca debe impedir responder
+            logger.warning("commercial_event_skipped code=%s", getattr(exc, "code", type(exc).__name__))
+
+    def _over_contact_limit(self, conversation_id, now: datetime) -> bool:
+        per_hour, per_day = self._contact_limits
+        # Cuenta también el mensaje actual, que ya fue persistido antes de este punto.
+        return (self._messages.count_inbound_since(conversation_id, now - timedelta(hours=1)) > per_hour
+                or self._messages.count_inbound_since(conversation_id, now - timedelta(days=1)) > per_day)
+
+    def _recoverable(self, claim, conversation_id, lead_id, code: str, now) -> ProcessResult:
+        """Error que no es una petición de asesor: se responde con un mensaje neutro y la conversación sigue activa."""
+        logger.info("recoverable_reply event=%s code=%s", claim.event_id, code)
+        return self._persist(claim, conversation_id, lead_id, None, SAFE_REPLY_RETRY, now, error_code=code)
 
     def _persist(self, claim, conversation_id, lead_id, lead_status, reply_text, now,
                  ignored_reason: str | None = None, error_code: str | None = None,
@@ -195,6 +244,8 @@ class EventProcessor:
             kind=kind,
             business_phone_id=claim.business_phone_id,
         )
+        if reply_text is not None:
+            logger.info("reply_queued event=%s kind=%s", claim.event_id, kind)
         if ignored_reason is not None:
             return ProcessResult(status="ignored", error_code=ignored_reason)
         return ProcessResult(status="processed", error_code=error_code)

@@ -7,7 +7,7 @@ from decimal import Decimal
 import pytest
 
 from app.agent.orchestrator import AgentOutcome, OutcomeStatus
-from app.agent.safety import SAFE_REPLY_HUMAN
+from app.agent.safety import SAFE_REPLY_HUMAN, SAFE_REPLY_RETRY
 from app.agent.schemas import LeadStage
 from app.repositories.errors import StorageError
 from app.repositories.jobs import Claim
@@ -54,6 +54,10 @@ class FakeConversations:
 class FakeMessages:
     def __init__(self):
         self.inbound: list[dict] = []
+        self.inbound_count = 0
+
+    def count_inbound_since(self, conversation_id, since):
+        return self.inbound_count
 
     def record_inbound(self, conversation_id, wa_message_id, message_type, received_at, content_text=None,
                        content_expires_at=None, window_trusted=False):
@@ -160,22 +164,34 @@ def test_human_controlled_conversation_is_ignored_without_reply():
     assert outbox.rows[0]["reply_text"] is None
 
 
-def test_budget_blocked_escalates_to_human_with_safe_message():
+def test_budget_blocked_is_recoverable_neutral_reply_without_transfer():
+    # Presupuesto agotado: no es una petición de asesor. Respuesta neutra, sin transferencia ni pausa.
     outbox = FakeOutbox()
     handoffs = FakeHandoffs()
     agent = FakeAgent(_outcome(OutcomeStatus.BUDGET_BLOCKED, error_code="daily_budget"))
     result = _processor(agent, outbox=outbox, handoffs=handoffs).process(_claim(), ALWAYS_RENEW)
     assert result.status == "processed"
-    assert handoffs.opened == [("other", "normal")]
-    assert outbox.rows[0]["reply_text"] == SAFE_REPLY_HUMAN
-    assert outbox.rows[0]["lead_status"] == "handed_off"
+    assert handoffs.opened == []
+    assert outbox.rows[0]["reply_text"] == SAFE_REPLY_RETRY
+    assert outbox.rows[0]["reply_text"] != SAFE_REPLY_HUMAN
 
 
-def test_disabled_agent_escalates_to_human():
+def test_disabled_agent_is_recoverable_neutral_reply_without_transfer():
     handoffs = FakeHandoffs()
+    outbox = FakeOutbox()
     agent = FakeAgent(_outcome(OutcomeStatus.DISABLED, error_code="agent_disabled"))
-    _processor(agent, handoffs=handoffs).process(_claim(), ALWAYS_RENEW)
-    assert handoffs.opened == [("other", "normal")]
+    _processor(agent, outbox=outbox, handoffs=handoffs).process(_claim(), ALWAYS_RENEW)
+    assert handoffs.opened == []
+    assert outbox.rows[0]["reply_text"] == SAFE_REPLY_RETRY
+
+
+def test_invalid_model_output_gets_neutral_reply_and_keeps_conversation_automated():
+    handoffs = FakeHandoffs()
+    outbox = FakeOutbox()
+    agent = FakeAgent(_outcome(OutcomeStatus.INVALID_OUTPUT, error_code="schema_invalid"))
+    _processor(agent, outbox=outbox, handoffs=handoffs).process(_claim(), ALWAYS_RENEW)
+    assert handoffs.opened == []
+    assert outbox.rows[0]["reply_text"] == SAFE_REPLY_RETRY
 
 
 def test_rate_limit_not_billed_requests_retry():
