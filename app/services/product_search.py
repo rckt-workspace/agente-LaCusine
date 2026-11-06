@@ -1,6 +1,9 @@
 """Búsqueda comercial sobre el catálogo: nombre, marca, referencia, categoría, presupuesto y características.
 
-- Solo devuelve hasta MAX_RESULTS productos: el catálogo completo nunca se envía a Claude.
+- Recupera hasta CANDIDATE_LIMIT candidatos y devuelve al modelo solo MAX_RESULTS, ya ordenados por relevancia.
+- Distingue la intención: máquina (cafetera, espresso…) o accesorio (filtro, pastilla, descalcificador…).
+  Un accesorio nunca gana a una máquina por ser más barato si la consulta pide una máquina.
+- El precio solo desempata cuando la consulta pide algo económico. Las palabras conversacionales no cuentan.
 - Corrige errores menores de escritura contra el vocabulario real del catálogo (difflib, sin dependencias).
 - Marca una coincidencia como confiable solo con referencia exacta o con al menos la mitad de los términos.
   Si no es confiable, el agente debe reconocer que no tiene información suficiente.
@@ -16,18 +19,37 @@ from difflib import get_close_matches
 from typing import Protocol
 from uuid import UUID
 
-from app.repositories.products import MAX_RESULTS, ProductHit
-from app.services.text import normalize, tokens
+from app.repositories.products import CANDIDATE_LIMIT, MAX_RESULTS, ProductHit
+from app.services.text import normalize, tokens, words
 
 TYPO_CUTOFF = 0.82
 MIN_TOKEN_LENGTH_FOR_TYPO = 5
 REFERENCE_PATTERN = re.compile(r"\b(?=[A-Za-z0-9-]*\d)[A-Za-z0-9][A-Za-z0-9-]{3,}\b")
+
+# Vocabulario de intención. Se evalúa sobre el texto normalizado, antes de quitar palabras vacías.
+ACCESSORY_TERMS = frozenset({
+    "filtro", "filtros", "pastilla", "pastillas", "descalcificador", "descalcificacion", "limpiador",
+    "limpieza", "accesorio", "accesorios", "cartucho", "cartuchos", "repuesto", "repuestos", "kit", "juego",
+    "mantenimiento", "consumible", "consumibles",
+})
+MACHINE_TERMS = frozenset({
+    "cafetera", "cafeteras", "maquina", "maquinas", "espresso", "superautomatica", "superautomaticas",
+    "automatica", "automaticas", "cafe",
+})
+ECONOMY_TERMS = frozenset({"economica", "economico", "economicas", "economicos", "barata", "barato", "baratas", "baratos", "asequible"})
 
 
 class ProductReadRepository(Protocol):
     def search(self, tokens: list[str], references: list[str], max_price_cop: int | None, limit: int) -> list[ProductHit]: ...
     def get_by_ids(self, ids: list[UUID]) -> dict[UUID, ProductHit]: ...
     def search_texts(self) -> list[str]: ...
+
+
+@dataclass(frozen=True)
+class QueryIntent:
+    wants_accessory: bool
+    economy: bool
+    query_tokens: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -38,6 +60,67 @@ class SearchResult:
     corrections: dict[str, str] = field(default_factory=dict)
 
 
+def _singular(token: str) -> str:
+    """«filtros» → «filtro», «accesorios» → «accesorio». La coincidencia es por subcadena: el singular
+    aparece dentro del plural del catálogo y dentro del singular, así que ambos casos coinciden."""
+    if len(token) > 4 and token.endswith("s") and not token.endswith("ss"):
+        return token[:-1]
+    return token
+
+
+def query_intent(raw_words: list[str], query_tokens: list[str]) -> QueryIntent:
+    """Intención de la consulta. `raw_words` incluye palabras vacías; así se detectan «económica» y «filtros»."""
+    words = set(raw_words) | set(query_tokens)
+    wants_accessory = bool(words & ACCESSORY_TERMS)
+    return QueryIntent(
+        wants_accessory=wants_accessory,
+        economy=bool(words & ECONOMY_TERMS),
+        query_tokens=tuple(query_tokens),
+    )
+
+
+def is_accessory(hit: ProductHit) -> bool:
+    """Accesorio por categoría del catálogo (p. ej. «Accesorios cafeteras», «Accesorios parrilla»)."""
+    category = normalize(hit.category or "")
+    return category.startswith("accesorio") or "repuesto" in category
+
+
+def is_aligned(hit: ProductHit, intent: QueryIntent) -> bool:
+    """El tipo del producto coincide con lo que pide el cliente. Sin intención explícita, las máquinas
+    (no accesorios) son la opción por defecto: es lo que se busca al nombrar una marca."""
+    return is_accessory(hit) == intent.wants_accessory
+
+
+def rank_candidates(hits: list[ProductHit], intent: QueryIntent) -> list[ProductHit]:
+    """Ordena candidatos sin duplicados. Función pura y determinista.
+
+    Criterios, en orden: referencia exacta; tipo alineado con la intención; marca mencionada; términos
+    coincidentes; disponibilidad; precio solo si la consulta pide económico; nombre como desempate estable.
+    """
+    unique: dict[UUID, ProductHit] = {}
+    for hit in hits:
+        unique.setdefault(hit.id, hit)
+    ordered = sorted(unique.values(), key=lambda h: normalize(h.name or h.reference))
+
+    def score(hit: ProductHit) -> tuple:
+        brand_words = set(normalize(hit.brand or "").split())
+        brand_mentions = sum(1 for t in intent.query_tokens if t in brand_words)
+        if intent.economy and hit.price_cop is not None:
+            price_rank = -float(hit.price_cop)  # más barato = mayor puntuación, solo en consultas económicas
+        else:
+            price_rank = 0.0
+        return (
+            bool(hit.reference_match),
+            is_aligned(hit, intent),
+            brand_mentions,
+            hit.matched_tokens,
+            bool(hit.is_available),
+            price_rank,
+        )
+
+    return sorted(ordered, key=score, reverse=True)
+
+
 class ProductSearchService:
     def __init__(self, repository: ProductReadRepository) -> None:
         self._repository = repository
@@ -45,16 +128,23 @@ class ProductSearchService:
         self._lock = threading.Lock()
 
     def search(self, query: str, max_price_cop: int | None = None, limit: int = MAX_RESULTS) -> SearchResult:
-        query_tokens, corrections = self._correct(tokens(query))
+        raw_words = words(query)
+        query_tokens, corrections = self._correct([_singular(t) for t in tokens(query)])
         references = [m.group(0).upper() for m in REFERENCE_PATTERN.finditer(query)]
         if not query_tokens and not references:
             return SearchResult(hits=[], confident=False, tokens=[], corrections=corrections)
 
-        hits = self._repository.search(query_tokens, references, max_price_cop, min(limit, MAX_RESULTS))
-        confident = any(h.reference_match for h in hits) or (
-            bool(hits) and hits[0].matched_tokens >= math.ceil(len(query_tokens) / 2) and hits[0].matched_tokens > 0
+        intent = query_intent(raw_words, query_tokens)
+        candidates = self._repository.search(query_tokens, references, max_price_cop, CANDIDATE_LIMIT)
+        ranked = rank_candidates(candidates, intent)[: min(limit, MAX_RESULTS)]
+        top = ranked[0] if ranked else None
+        confident = any(h.reference_match for h in ranked) or (
+            top is not None
+            and is_aligned(top, intent)
+            and top.matched_tokens > 0
+            and top.matched_tokens >= math.ceil(len(query_tokens) / 2)
         )
-        return SearchResult(hits=hits, confident=confident, tokens=query_tokens, corrections=corrections)
+        return SearchResult(hits=ranked, confident=confident, tokens=query_tokens, corrections=corrections)
 
     def _correct(self, query_tokens: list[str]) -> tuple[list[str], dict[str, str]]:
         vocabulary = self._load_vocabulary()

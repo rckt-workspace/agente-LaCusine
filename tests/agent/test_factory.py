@@ -74,6 +74,8 @@ def test_fully_configured_real_provider_is_built_with_bounded_options(sdk_spy):
     settings = _settings(
         agent_dry_run=False, anthropic_enabled=True, anthropic_api_key="clave-ficticia",
         anthropic_model="claude-haiku-5-5", anthropic_timeout_seconds=7, anthropic_max_retries=1,
+        anthropic_pricing_model="claude-haiku-5-5", price_input_usd_per_mtok=Decimal("0.10"),
+        price_output_usd_per_mtok=Decimal("0.50"),
     )
     provider = factory.select_provider(settings)
     assert provider is not None and provider.name == "anthropic"

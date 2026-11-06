@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections import Counter
 from dataclasses import dataclass, field
 from decimal import Decimal
 from enum import Enum
@@ -31,6 +32,7 @@ from app.agent.handoff import decide
 from app.agent.knowledge import KnowledgeService
 from app.agent.qualification import derive_stage, detect_signals, parse_budget_cop
 from app.agent.safety import (
+    FIXED_TRANSFER_TEXTS,
     SAFE_REPLY_HUMAN,
     SAFE_REPLY_INJECTION,
     SAFE_REPLY_SENSITIVE,
@@ -49,6 +51,16 @@ from app.services.product_search import ProductSearchService
 logger = logging.getLogger("lacusine.agent")
 DESCRIPTION_CHARS = 140
 MAX_CANDIDATES_IN_PROMPT = 5
+# Reserva conservadora de entrada. Con 3 caracteres por token se subestimó la entrada real (4.358 tokens observados
+# frente a ~3.200 estimados con ~9.500 caracteres). Con 2 caracteres por token la estimación cubre esa densidad.
+RESERVE_CHARS_PER_TOKEN = 2
+RESERVE_TOKEN_OVERHEAD = 50
+
+
+def input_tokens_reserve_estimate(request: LLMRequest) -> int:
+    """Estimación CONSERVADORA de tokens de entrada para reservar presupuesto antes de llamar. Nunca subestima."""
+    characters = len(request.system) + sum(len(m.content) for m in request.messages)
+    return characters // RESERVE_CHARS_PER_TOKEN + RESERVE_TOKEN_OVERHEAD
 
 
 class OutcomeStatus(str, Enum):
@@ -191,12 +203,13 @@ class CommercialAgent:
                 pricing = self._cost.pricing
                 if pricing is None:
                     raise BudgetExceededError("pricing_not_configured")
-                estimate_tokens = (len(request.system) + sum(len(m.content) for m in request.messages)) // 3 + 50
+                estimate_tokens = input_tokens_reserve_estimate(request)
                 self._cost.reserve(call_id, conversation_id, worst_case_cost(pricing, estimate_tokens, request.max_output_tokens))
             except BudgetExceededError as exc:
                 logger.warning("agent_budget_blocked call_id=%s code=%s", call_id, exc.code)
                 return AgentOutcome(OutcomeStatus.BUDGET_BLOCKED, error_code=exc.code)
 
+        logger.info("provider_invoked call_id=%s provider=%s model=%s", call_id, self._provider.name, self._provider.model)
         try:
             response = self._provider.complete(request)
         except LLMError as exc:
@@ -212,16 +225,25 @@ class CommercialAgent:
             )
 
         cost = self._cost.record_success(call_id, conversation_id, response)
+        # Métrica de tamaño sin contenido: sin texto, sin datos del cliente.
+        block_counts = Counter(response.block_types)
+        blocks = ",".join(f"{kind}:{count}" for kind, count in sorted(block_counts.items())) or "-"
+        logger.info("llm_output_stats call_id=%s out_tokens=%d in_tokens=%d chars=%d braces=%d truncated=%s blocks=%s",
+                    call_id, response.usage.output_tokens, response.usage.input_tokens, len(response.text),
+                    response.text.count("{"), str(response.truncated).lower(), blocks)
+        logger.info("reply_generated call_id=%s provider=%s model=%s dry_run=%s",
+                    call_id, response.provider, response.model, dry_run)
 
         if response.truncated:
-            self._handoffs.open(conversation_id, "other", "normal")
+            # Error recuperable: no transfiere ni pausa. El procesador responde con un mensaje neutro.
+            logger.warning("agent_output_rejected call_id=%s reason=truncated", call_id)
             return AgentOutcome(OutcomeStatus.INVALID_OUTPUT, error_code="truncated", cost_usd=cost, dry_run=dry_run)
 
         try:
             reply = parse_reply(response.text)
         except (ValidationError, ValueError):
+            # Error recuperable: no transfiere ni pausa. El procesador responde con un mensaje neutro.
             logger.warning("agent_output_rejected call_id=%s reason=schema", call_id)
-            self._handoffs.open(conversation_id, "other", "normal")
             return AgentOutcome(OutcomeStatus.INVALID_OUTPUT, error_code="schema_invalid", cost_usd=cost, dry_run=dry_run)
 
         violations = output_violations(reply.reply_text)
@@ -241,9 +263,12 @@ class CommercialAgent:
 
         handoff = decide(signals, reply.requires_human, reply.handoff_reason)
         stage = derive_stage(signals)
+        if handoff.ignored_model_reason is not None:
+            logger.info("model_escalation_ignored call_id=%s reason=%s", call_id, handoff.ignored_model_reason)
         if handoff.required:
             if stage is not LeadStage.HIGH_INTENT:
                 stage = LeadStage.HUMAN_REQUIRED
+            logger.info("handoff_opened call_id=%s reason=%s source=%s", call_id, handoff.reason, handoff.source)
             self._handoffs.open(conversation_id, handoff.reason, handoff.priority)
 
         return AgentOutcome(
@@ -260,8 +285,11 @@ class CommercialAgent:
         )
 
     def _build_request(self, call_id: str, text: str, window, search) -> LLMRequest:
+        # Los textos fijos de transferencia no se reenvían como contexto: el historial no justifica otra transferencia.
         history = "\n".join(
-            f"[{'cliente' if turn.role == 'user' else 'agente'}] {turn.text}" for turn in window.turns
+            f"[{'cliente' if turn.role == 'user' else 'agente'}] {turn.text}"
+            for turn in window.turns
+            if not (turn.role == "assistant" and turn.text in FIXED_TRANSFER_TEXTS)
         ) or "(sin historial)"
         candidates = "\n".join(_format_candidate(hit) for hit in search.hits[:MAX_CANDIDATES_IN_PROMPT]) or "(sin candidatos)"
         user_content = (

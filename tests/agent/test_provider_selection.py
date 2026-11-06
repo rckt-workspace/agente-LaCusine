@@ -97,7 +97,8 @@ def test_explicit_openrouter_never_builds_the_anthropic_client(sdk_spy):
 
 def test_explicit_anthropic_builds_only_anthropic_even_with_openrouter_ready(sdk_spy):
     settings = _settings(**{**OR_READY, "llm_provider": "anthropic", "anthropic_enabled": True,
-                            "anthropic_api_key": "k", "anthropic_model": "m"})
+                            "anthropic_api_key": "k", "anthropic_model": "m", "anthropic_pricing_model": "m",
+                            "price_input_usd_per_mtok": Decimal("1"), "price_output_usd_per_mtok": Decimal("1")})
     provider = factory.select_provider(settings)
     assert provider.name == "anthropic"
     assert len(sdk_spy.instances) == 1  # solo el cliente de Anthropic; ningún cliente de OpenRouter
@@ -212,7 +213,7 @@ def test_invalid_json_is_rejected_by_the_commercial_validation_and_not_retried()
     outcome = harness.ask("Busco una cafetera", call_id="wamid.J1")
     assert outcome.status is OutcomeStatus.INVALID_OUTPUT
     assert provider.calls == 1
-    assert harness.handoffs.opened, "una respuesta inválida se transfiere a una persona"
+    assert not harness.handoffs.opened, "una respuesta inválida es recuperable: no transfiere a una persona"
 
 
 def test_commercial_agent_keeps_working_with_openrouter_and_human_transfer_still_blocks():

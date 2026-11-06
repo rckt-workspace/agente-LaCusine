@@ -10,7 +10,7 @@ from decimal import Decimal
 from uuid import UUID
 
 from app.repositories.errors import StorageError
-from app.repositories.products import MAX_RESULTS, ProductHit
+from app.repositories.products import CANDIDATE_LIMIT, MAX_RESULTS, ProductHit
 from app.services.cost_tracker import UsageEvent
 from app.services.text import normalize, tokens
 
@@ -62,7 +62,7 @@ class InMemoryProductRepository:
                 continue
             results.append(replace(hit, matched_tokens=matched, reference_match=ref_match))
         results.sort(key=lambda h: (not h.reference_match, -h.matched_tokens, not bool(h.is_available), h.price_cop or 0))
-        return results[: min(limit, MAX_RESULTS)]
+        return results[: min(limit, CANDIDATE_LIMIT)]
 
     def get_by_ids(self, ids: list[UUID]) -> dict[UUID, ProductHit]:
         return {hit.id: hit for hit, _ in self._rows if hit.id in set(ids)}

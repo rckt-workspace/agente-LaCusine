@@ -13,9 +13,14 @@ KNOWN_CITIES = (
     "cartagena", "chia", "sopo", "cajica", "guasca", "la calera", "tenjo", "tabio", "subachoque",
 )
 
+# Intención de compra: la IA sigue asesorando (no escala). Solo marca la etapa HIGH_INTENT.
 _PURCHASE = re.compile(
-    r"\b(lo compro|la compro|quiero comprar|quiero (pedirlo|pedirla|llevarlo|llevarla)|me lo llevo|"
-    r"c[oó]mo pago|formas? de pago|hacer (el|un) pedido|finalizar (la )?compra|lo quiero)\b",
+    r"\b(lo compro|la compro|quiero comprar|quiero (pedirlo|pedirla|llevarlo|llevarla)|me lo llevo|lo quiero)\b",
+    re.IGNORECASE,
+)
+# Pagos y cierre operativo del pedido: sí requieren asesor (política de pagos).
+_PAYMENT = re.compile(
+    r"\b(c[oó]mo pago|formas? de pago|hacer (el|un) pedido|finalizar (la )?compra)\b",
     re.IGNORECASE,
 )
 _QUOTE = re.compile(r"\b(cotiz\w*|por mayor|proyecto)\b", re.IGNORECASE)
@@ -34,6 +39,7 @@ _BUDGET_COP = re.compile(r"\$?\s*(\d{1,3}(?:\.\d{3})+|\d{5,9})(?!\d)")
 class Signals:
     human_request: bool = False
     purchase_intent: bool = False
+    payment_request: bool = False
     quote_request: bool = False
     installation: bool = False
     warranty: bool = False
@@ -46,7 +52,7 @@ class Signals:
 
     @property
     def needs_human(self) -> bool:
-        return any((self.human_request, self.quote_request, self.installation, self.warranty,
+        return any((self.human_request, self.payment_request, self.quote_request, self.installation, self.warranty,
                     self.return_request, self.complaint))
 
 
@@ -54,6 +60,7 @@ def detect_signals(text: str, product_interest: bool, confident_product: bool, h
     return Signals(
         human_request=human_request,
         purchase_intent=bool(_PURCHASE.search(text)),
+        payment_request=bool(_PAYMENT.search(text)),
         quote_request=bool(_QUOTE.search(text)),
         installation=bool(_INSTALLATION.search(text)),
         warranty=bool(_WARRANTY.search(text)),

@@ -66,7 +66,34 @@ class Pricing:
         )
 
     @classmethod
+    def for_anthropic(cls, settings: Settings, model: str | None) -> "Pricing | None":
+        """Tarifas de Anthropic ligadas a UN modelo (ANTHROPIC_PRICING_MODEL).
+
+        Si las tarifas se escribieron para otro modelo, o no hay modelo de tarifa, devuelve None: el agente no
+        puede reservar ni cobrar y no llama al proveedor. Así no se aplican tarifas de Haiku a Sonnet ni al revés.
+        """
+        if not model or not settings.anthropic_pricing_model or settings.anthropic_pricing_model != model:
+            return None
+        input_price = settings.price_input_usd_per_mtok
+        output_price = settings.price_output_usd_per_mtok
+        if input_price is None or output_price is None or input_price < 0 or output_price < 0:
+            return None
+        # Sin tarifa de caché configurada se usa la de entrada: sobreestima el costo, nunca lo subestima.
+        cache_write = settings.price_cache_write_usd_per_mtok or input_price
+        cache_read = settings.price_cache_read_usd_per_mtok or input_price
+        if cache_write < 0 or cache_read < 0:
+            return None
+        return cls(
+            input_per_mtok=input_price,
+            output_per_mtok=output_price,
+            cache_write_per_mtok=cache_write,
+            cache_read_per_mtok=cache_read,
+            reference=settings.pricing_reference or f"anthropic:{model}",
+        )
+
+    @classmethod
     def from_settings(cls, settings: Settings) -> "Pricing | None":
+        """Tarifas sin modelo. Solo para pruebas y para el caso sin proveedor real; el proveedor real usa for_anthropic."""
         if settings.price_input_usd_per_mtok is None or settings.price_output_usd_per_mtok is None:
             return None
         cache_write = settings.price_cache_write_usd_per_mtok or settings.price_input_usd_per_mtok

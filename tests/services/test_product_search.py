@@ -1,6 +1,7 @@
 """Búsqueda comercial sobre fixtures sintéticos (sin base de datos)."""
 
-from app.services.product_search import MAX_RESULTS, ProductSearchService
+from app.repositories.products import CANDIDATE_LIMIT, MAX_RESULTS
+from app.services.product_search import ProductSearchService
 from tests.agent.fakes import InMemoryProductRepository, product_fixtures
 
 
@@ -50,10 +51,11 @@ def test_budget_is_passed_to_repository_as_upper_bound():
     assert repo.search_calls[-1]["max_price"] == 4_000_000
 
 
-def test_results_are_capped_to_five_even_when_more_are_requested():
+def test_repository_fetches_candidates_but_the_model_gets_at_most_five():
     service, repo = _service()
-    service.search("cafetera nevera Jura Smeg Whirlpool", limit=50)
-    assert repo.search_calls[-1]["limit"] == MAX_RESULTS == 5
+    result = service.search("cafetera nevera Jura Smeg Whirlpool", limit=50)
+    assert repo.search_calls[-1]["limit"] == CANDIDATE_LIMIT
+    assert len(result.hits) <= MAX_RESULTS == 5
 
 
 def test_empty_query_does_not_touch_repository():

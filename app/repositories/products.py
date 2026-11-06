@@ -11,7 +11,8 @@ from psycopg_pool import ConnectionPool, PoolClosed
 
 from app.repositories.errors import StorageError
 
-MAX_RESULTS = 5
+MAX_RESULTS = 5  # productos que se envían al modelo
+CANDIDATE_LIMIT = 40  # candidatos recuperados antes de ordenar por relevancia comercial
 
 
 @dataclass(frozen=True)
@@ -77,7 +78,7 @@ class PostgresProductRepository:
             "tokens": tokens or [""],
             "refs": [r.upper() for r in references] or [""],
             "max_price": max_price_cop,
-            "limit": min(max(limit, 1), MAX_RESULTS),
+            "limit": min(max(limit, 1), CANDIDATE_LIMIT),
         }
         return self._fetch(_SEARCH_SQL, params)
 

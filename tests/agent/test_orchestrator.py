@@ -246,14 +246,15 @@ def test_returning_customer_context_includes_only_this_conversation_history():
 
 
 # 13. JSON inválido del modelo
-def test_invalid_json_from_model_is_not_sent_and_escalates():
+def test_invalid_json_from_model_is_not_sent_and_does_not_transfer():
+    # Error recuperable: no transfiere ni pausa la conversación (el procesador responde con un mensaje neutro).
     h = Harness()
     h.provider.script = ["Claro, aquí va mi respuesta: esto no es JSON"]
     outcome = h.ask("¿Qué cafeteras tienen?")
     assert outcome.status is OutcomeStatus.INVALID_OUTPUT
     assert outcome.reply_text is None
     assert outcome.error_code == "schema_invalid"
-    assert [r for _, r, _ in h.handoffs.opened] == ["other"]
+    assert h.handoffs.opened == []
 
 
 def test_extra_fields_in_model_output_are_rejected():

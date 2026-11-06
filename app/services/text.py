@@ -14,6 +14,12 @@ STOPWORDS = frozenset(
         "que", "quiero", "quisiera", "busco", "necesito", "me", "mi", "un", "una", "unos", "unas", "y",
         "precio", "cuanto", "cuánto", "vale", "tienen", "tiene", "hay", "info", "informacion", "favor",
         "hola", "buenas", "gracias", "puede", "podria", "podrian", "dame", "algo", "para", "sobre",
+        # Verbos y relleno de compra: no describen el producto.
+        "comprar", "compro", "recomienda", "recomiendame", "recomiendeme", "opciones", "opcion", "modelo",
+        "modelos", "producto", "productos", "tienes", "tendras", "ocupo", "quisiera", "pueden",
+        # Preferencias de precio: se usan para ordenar (ver product_search.ECONOMY_TERMS), no para coincidir.
+        "economica", "economico", "economicas", "economicos", "barata", "barato", "baratas", "baratos",
+        "asequible",
     }
 )
 
@@ -27,6 +33,11 @@ def normalize(text: str) -> str:
     return " ".join(_TOKEN.findall(strip_accents(text).lower()))
 
 
+def words(text: str) -> list[str]:
+    """Todas las palabras normalizadas, incluidas las vacías (para detectar intención)."""
+    return _TOKEN.findall(strip_accents(text).lower())
+
+
 def tokens(text: str) -> list[str]:
     """Tokens útiles: de al menos 2 caracteres y sin palabras vacías."""
-    return [t for t in _TOKEN.findall(strip_accents(text).lower()) if len(t) >= 2 and t not in STOPWORDS]
+    return [t for t in words(text) if len(t) >= 2 and t not in STOPWORDS]

@@ -171,14 +171,50 @@ def test_handoff_priority_and_reason_order():
 
 def test_handoff_is_not_reduced_by_model_and_model_can_add_one():
     assert decide(Signals(warranty=True), False, None).required is True
-    model_only = decide(Signals(), True, "unsupported_request")
-    assert model_only.required and model_only.reason == "unsupported_request"
+    # El modelo puede escalar por motivos concretos sin señal del backend.
+    model_warranty = decide(Signals(), True, "warranty")
+    assert model_warranty.required and model_warranty.reason == "warranty" and model_warranty.source == "model"
     assert decide(Signals(), False, None).required is False
 
 
-def test_purchase_intent_without_clear_product_still_escalates_as_purchase():
-    decision = decide(Signals(purchase_intent=True), False, None)
-    assert decision.reason == "purchase_intent" and decision.priority == "high"
+def test_model_escalation_without_a_justified_reason_is_ignored():
+    # Saludos o preguntas de catálogo: el modelo marca requires_human pero el motivo no justifica transferir.
+    for reason in ("unsupported_request", "other", "purchase_intent", "customer_request"):
+        decision = decide(Signals(), True, reason)
+        assert decision.required is False, reason
+        assert decision.ignored_model_reason == reason
+
+
+def test_backend_signal_is_the_source_of_truth_for_customer_requests():
+    decision = decide(Signals(human_request=True), True, "unsupported_request")
+    assert decision.required and decision.reason == "customer_request" and decision.source == "signal"
+
+
+def test_purchase_intent_keeps_advising_and_never_transfers_by_itself():
+    # "quiero comprar" es intención, no un motivo de transferencia: la IA sigue asesorando.
+    assert decide(Signals(purchase_intent=True), False, None).required is False
+    assert decide(Signals(purchase_intent=True, confident_product=True), False, None).required is False
+
+
+def test_purchase_intent_is_detected_without_escalating_and_stage_is_high_intent():
+    buy = detect_signals("quiero comprar la nevera", True, True, False)
+    assert buy.purchase_intent is True and buy.payment_request is False
+    assert decide(buy, False, None).required is False
+    assert derive_stage(buy) is LeadStage.HIGH_INTENT
+
+
+def test_payment_and_order_closing_still_transfer_to_advisor():
+    for text in ("¿cómo pago?", "formas de pago", "quiero hacer el pedido", "finalizar la compra"):
+        signals = detect_signals(text, True, True, False)
+        assert signals.payment_request is True, text
+        decision = decide(signals, False, None)
+        assert decision.required is True and decision.reason == "payment_request" and decision.priority == "high"
+
+
+def test_mixed_purchase_and_payment_question_escalates_for_payment_only():
+    signals = detect_signals("lo compro, ¿cómo pago?", True, True, False)
+    assert signals.purchase_intent is True and signals.payment_request is True
+    assert decide(signals, False, None).reason == "payment_request"
 
 
 # --- Esquema de respuesta ---

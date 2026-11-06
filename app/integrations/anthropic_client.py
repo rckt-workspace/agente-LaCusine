@@ -36,6 +36,17 @@ from app.integrations.llm import (
 logger = logging.getLogger("lacusine.agent.anthropic")
 PROVIDER_NAME = "anthropic"
 BACKOFF_BASE_SECONDS = 0.5
+# Valores según la documentación oficial de Anthropic (guía de migración de Sonnet 5.5):
+#  * claude-sonnet-5-5 admite "adaptive" y "between_tools". "disabled" devuelve 400 en este modelo.
+#  * "between_tools" no genera pensamiento inicial; sin herramientas la respuesta es solo texto.
+#  * "between_tools" acepta esfuerzo low, medium y high; con xhigh o max devuelve 400.
+#  * Otros modelos: solo "adaptive", como estaba verificado antes. "between_tools" NO se extiende a ellos.
+THINKING_TYPES_BY_MODEL: dict[str, frozenset[str]] = {
+    "claude-sonnet-5-5": frozenset({"adaptive", "between_tools"}),
+}
+DEFAULT_THINKING_TYPES: frozenset[str] = frozenset({"adaptive"})
+BETWEEN_TOOLS_EFFORT_LEVELS: frozenset[str] = frozenset({"low", "medium", "high"})
+SUPPORTED_EFFORT_LEVELS = frozenset({"low", "medium", "high", "xhigh", "max"})
 
 
 class AnthropicAgentClient:
@@ -50,6 +61,8 @@ class AnthropicAgentClient:
         max_retries: int = 1,
         max_concurrency: int = 2,
         prompt_caching: bool = False,
+        effort: str | None = None,
+        thinking: str | None = None,
         sdk_client: Any | None = None,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
@@ -57,6 +70,15 @@ class AnthropicAgentClient:
             raise LLMDisabledError("missing_api_key")
         if not model:
             raise LLMDisabledError("missing_model")
+        allowed_thinking = THINKING_TYPES_BY_MODEL.get(model, DEFAULT_THINKING_TYPES)
+        if thinking is not None and thinking not in allowed_thinking:
+            raise ValueError("thinking_type_unsupported_for_model")
+        if effort is not None and effort not in SUPPORTED_EFFORT_LEVELS:
+            raise ValueError("effort_unsupported")
+        if thinking == "between_tools" and effort is not None and effort not in BETWEEN_TOOLS_EFFORT_LEVELS:
+            raise ValueError("effort_incompatible_with_between_tools")
+        self._effort = effort
+        self._thinking = thinking
         if max_retries < 0 or max_retries > 3:
             raise ValueError("max_retries debe estar entre 0 y 3")
         if max_concurrency < 1:
@@ -95,12 +117,19 @@ class AnthropicAgentClient:
         system_block: dict[str, Any] = {"type": "text", "text": request.system}
         if self._prompt_caching:
             system_block["cache_control"] = {"type": "ephemeral"}
+        # Parámetros opcionales: solo se envían si están configurados. Sin configuración la solicitud no cambia.
+        optional: dict[str, Any] = {}
+        if self._thinking is not None:
+            optional["thinking"] = {"type": self._thinking}
+        if self._effort is not None:
+            optional["output_config"] = {"effort": self._effort}
         try:
             message = self._sdk.messages.create(
                 model=self.model,
                 max_tokens=request.max_output_tokens,
                 system=[system_block],
                 messages=[{"role": m.role, "content": m.content} for m in request.messages],
+                **optional,
             )
         except anthropic.AuthenticationError:
             raise LLMAuthError() from None
@@ -129,6 +158,7 @@ class AnthropicAgentClient:
                 cache_write_tokens=usage.cache_creation_input_tokens or 0,
             ),
             truncated=message.stop_reason == "max_tokens",
+            block_types=tuple(str(getattr(block, "type", "unknown")) for block in message.content),
         )
         logger.info(
             "llm_call_completed call_id=%s model=%s in=%d out=%d",

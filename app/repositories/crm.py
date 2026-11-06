@@ -106,6 +106,19 @@ class PostgresMessageRepository:
     def __init__(self, pool: ConnectionPool) -> None:
         self._pool = pool
 
+    def count_inbound_since(self, conversation_id: UUID, since: datetime) -> int:
+        """Mensajes entrantes de UNA conversación desde un instante. Sirve para límites de frecuencia por contacto."""
+        try:
+            with self._pool.connection() as conn:
+                row = conn.execute(
+                    "select count(*) from public.messages "
+                    "where conversation_id = %s and direction = 'inbound' and received_at >= %s",
+                    (conversation_id, since),
+                ).fetchone()
+                return int(row[0])
+        except (psycopg.Error, PoolClosed):
+            raise StorageError("message_read_failed") from None
+
     def record_inbound(
         self,
         conversation_id: UUID,

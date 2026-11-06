@@ -23,6 +23,39 @@ from app.services.product_search import ProductSearchService
 logger = logging.getLogger("lacusine.agent")
 
 
+_REAL_PROVIDERS = ("anthropic", "openrouter")
+_KNOWN_PROVIDERS = ("fake", "anthropic", "openrouter")
+_AUTO = object()
+
+
+def worker_profile_problems(settings: Settings, *, real_sender: bool = True) -> list[str]:
+    """Incoherencias de configuración que impiden arrancar un worker. Función pura: no abre conexiones.
+
+    Un worker con proveedor simulado no debe enviar nada a WhatsApp real: sus respuestas son texto fijo de prueba
+    y podrían entregarse a un cliente. `real_sender=False` (pruebas con simulador inyectado) no toca Meta.
+    """
+    problems: list[str] = []
+    explicit = settings.llm_provider
+    if explicit is not None and explicit not in _KNOWN_PROVIDERS:
+        problems.append("llm_provider_unknown")
+    if explicit in _REAL_PROVIDERS and settings.agent_dry_run:
+        # LLM_PROVIDER pide Claude/OpenRouter real pero AGENT_DRY_RUN lo sustituiría por el simulado en silencio.
+        problems.append("dry_run_conflicts_with_llm_provider")
+    simulated = settings.agent_dry_run or explicit == "fake"
+    if real_sender and simulated and settings.meta_send_enabled and not settings.demo_enabled:
+        problems.append("simulated_provider_send_refused")
+    return problems
+
+
+def requires_real_provider(settings: Settings) -> bool:
+    """True si la configuración pide un proveedor real. En ese caso no se acepta un agente deshabilitado."""
+    if settings.agent_dry_run:
+        return False
+    if settings.llm_provider in _REAL_PROVIDERS:
+        return True
+    return settings.llm_provider is None and settings.anthropic_enabled
+
+
 def select_provider(settings: Settings) -> LLMProvider | None:
     """Un único proveedor, elegido por LLM_PROVIDER. Nunca dos a la vez.
 
@@ -48,17 +81,28 @@ def _anthropic_provider(settings: Settings) -> LLMProvider | None:
     if not settings.anthropic_enabled:
         return None
     try:
-        return AnthropicAgentClient(
+        client = AnthropicAgentClient(
             api_key=settings.anthropic_api_key,
             model=settings.anthropic_model,
             timeout_seconds=settings.anthropic_timeout_seconds,
             max_retries=settings.anthropic_max_retries,
             max_concurrency=settings.anthropic_max_concurrency,
             prompt_caching=settings.anthropic_prompt_caching,
+            effort=settings.anthropic_effort,
+            thinking=settings.anthropic_thinking,
         )
+        # Tarifas ligadas al modelo: sin coincidencia el proveedor no se usa (ninguna llamada facturable).
+        if Pricing.for_anthropic(settings, client.model) is None:
+            logger.error("agent_misconfigured code=anthropic_pricing_model_mismatch")
+            return None
+        return client
     except LLMDisabledError as exc:
         # Configuración incompleta: el agente se deshabilita en lugar de llamar sin clave o sin modelo.
         logger.error("agent_misconfigured code=%s", exc.code)
+        return None
+    except ValueError as exc:
+        # Esfuerzo o modo de pensamiento no admitidos: se rechaza en lugar de enviar un parámetro desconocido.
+        logger.error("agent_misconfigured code=%s", exc)
         return None
 
 
@@ -90,6 +134,8 @@ def pricing_for(settings: Settings, provider: LLMProvider | None) -> Pricing | N
     """Tarifas del proveedor seleccionado. Cada proveedor usa sus propias tarifas."""
     if provider is not None and provider.name == "openrouter":
         return Pricing.from_openrouter(settings)
+    if provider is not None and provider.name == "anthropic":
+        return Pricing.for_anthropic(settings, provider.model)
     return Pricing.from_settings(settings)
 
 
@@ -103,8 +149,10 @@ def build_commercial_agent(
     handoff_repository,
     knowledge: KnowledgeService | None = None,
     budget_ledger=None,
+    provider=_AUTO,
 ) -> CommercialAgent:
-    provider = select_provider(settings)
+    if provider is _AUTO:
+        provider = select_provider(settings)
     cost = CostTracker(
         store=usage_store,
         pricing=pricing_for(settings, provider),

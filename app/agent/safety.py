@@ -31,6 +31,12 @@ SAFE_REPLY_HUMAN = (
 SAFE_REPLY_UNSAFE_OUTPUT = (
     "Para responderte con exactitud, te comunico con un asesor de La Cuisine."
 )
+# Error recuperable (presupuesto, proveedor, salida inválida): NO transfiere ni pausa la conversación.
+SAFE_REPLY_RETRY = (
+    "Disculpa, en este momento no pude preparar la respuesta. ¿Me escribes de nuevo tu consulta?"
+)
+# Textos de transferencia o de error. No se reenvían como historial al modelo: no deben inducir otra transferencia.
+FIXED_TRANSFER_TEXTS = frozenset({SAFE_REPLY_HUMAN, SAFE_REPLY_UNSAFE_OUTPUT, SAFE_REPLY_RETRY})
 
 # --- Patrones de entrada ---
 

@@ -37,6 +37,8 @@ class LLMResponse:
     provider: str
     usage: LLMUsage
     truncated: bool = False
+    # Tipos de bloque devueltos por el proveedor (p. ej. "text", "thinking"). Sin contenido: solo para medir.
+    block_types: tuple[str, ...] = ()
 
 
 class LLMError(Exception):
