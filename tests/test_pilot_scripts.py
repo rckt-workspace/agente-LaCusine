@@ -27,8 +27,8 @@ from tests.worker.test_processor import (  # noqa: E402
     _claim,
 )
 
-REPO = r"C:\Users\maura\OneDrive\Documents\GitHub\agente-LaCusine"
-OTHER = r"C:\Users\maura\OneDrive\Documents\GitHub\otro-proyecto"
+REPO = str(Path(__file__).resolve().parents[1])  # raíz de este repositorio, sea cual sea la máquina
+OTHER = str(Path(REPO).parent / "otro-proyecto")  # proyecto hermano inexistente: nunca se toca
 
 
 def _proc(pid, parent, cmd):
@@ -52,7 +52,7 @@ def test_worker_tree_includes_the_base_child_and_ignores_other_projects():
         _worker_base(101, 100),
         _worker_launcher(200, repo=OTHER),
         _worker_base(201, 200),
-        _proc(300, 1, f'"{REPO}\\.venv\\Scripts\\python.exe" -m uvicorn app.main:app'),
+        _proc(300, 1, f'"{Path(REPO) / ".venv" / "Scripts" / "python.exe"}" -m uvicorn app.main:app'),
     ]
     trees = pilot_workers.find_worker_trees(processes, REPO)
     assert trees == [{"root": 100, "pids": [100, 101]}]
