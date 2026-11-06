@@ -2,7 +2,13 @@
 
 Agente comercial de WhatsApp para La Cuisine Appliances Colombia (WhatsApp Cloud API + Claude API + FastAPI + Supabase).
 
-> **Estado: Fases 1 a 5 implementadas en el repositorio.** La Fase 5 añade el adaptador de WhatsApp Cloud API y el dispatcher de salidas, **desactivados por defecto**. El webhook persiste eventos de forma idempotente; el worker procesa la cola con leases, orden por contacto, reintentos y presupuesto con reservas; el motor comercial de IA se prueba con un proveedor simulado. **No hay conexión a WhatsApp, no se llama a Claude, no se aplican migraciones en Supabase real, no hay despliegues y no hay envíos.**
+> **Estado (5 de noviembre de 2026):**
+> - **Piloto local validado:** FastAPI + ngrok + Meta WhatsApp Cloud API + Supabase Cloud + Claude Sonnet 5.5 respondiendo consultas comerciales reales con un único worker. Detalles en [`docs/estado-piloto-2026-11-05.md`](docs/estado-piloto-2026-11-05.md) y en el [runbook del piloto](docs/piloto-whatsapp-ngrok-runbook.md).
+> - **Desarrollo pendiente:** errores 400 de envío sin código confirmado, indicador de escritura en pruebas reales, memoria conversacional limitada, multi-línea empresarial no soportada, credenciales de prueba locales en contenido versionado.
+> - **Despliegue productivo: no autorizado.** No hay despliegues en Render, AWS ni producción.
+> - **Arquitectura AWS: prevista, no desplegada.**
+>
+> El webhook persiste eventos de forma idempotente; el worker procesa la cola con leases, orden por contacto, reintentos y presupuesto con reservas. El piloto usa un único worker y un único número de negocio.
 
 Documentación: [`docs/arquitectura.html`](docs/arquitectura.html) · [`docs/modelo-datos.md`](docs/modelo-datos.md) · [`docs/agente-ia.md`](docs/agente-ia.md)
 
@@ -206,7 +212,7 @@ Las pruebas que dependen de la base de datos exigen `TEST_DATABASE_URL`; la cont
 - **Worker en espera:** con `WORKER_ENABLED` distinto de `true`, el proceso no sale ni consume la cola.
 - **Conciliación:** `python -m app.admin.cli` resuelve casos inciertos con guardas, motivo y auditoría. No expone endpoints HTTP.
 - **Catálogo:** procedimiento en [catalogo-operacion.md](docs/catalogo-operacion.md). Sin importación automática.
-- **Operación del piloto (Fase 6, preparación):** orden de fusión, Supabase de prueba, Render, variables, primer mensaje y criterios GO / NO-GO en [operacion-piloto.md](docs/operacion-piloto.md). Nada de ello se ha ejecutado.
+- **Piloto local (ejecutado el 5/11/2026):** arranque y verificación en [piloto-whatsapp-ngrok-runbook.md](docs/piloto-whatsapp-ngrok-runbook.md) y estado en [estado-piloto-2026-11-05.md](docs/estado-piloto-2026-11-05.md). El procedimiento de Render y los criterios GO / NO-GO de [operacion-piloto.md](docs/operacion-piloto.md) siguen sin ejecutarse.
 
 ## Pendiente (no implementado, sin autorización)
 
@@ -217,7 +223,7 @@ Las pruebas que dependen de la base de datos exigen `TEST_DATABASE_URL`; la cont
 - **Varias líneas de negocio:** requiere cambiar el esquema de leads (ver [whatsapp-integration.md](docs/whatsapp-integration.md)).
 - **Despliegue en AWS** (EC2 o ECS, decisión pendiente de créditos y presupuesto): requiere autorización. Supabase licenciado: requiere licencia y proyecto.
 - **Validación legal** de las políticas marcadas como pendientes (garantías de accesorios, devoluciones en promoción, 25 % de gasto administrativo).
-- **Precios de Meta, Anthropic y Supabase**: verificar antes de presupuestar. Las tarifas de Anthropic usadas como referencia se verificaron el 28/10/2026 y no están en el código.
+- **Precios de Meta, Anthropic y Supabase**: verificar antes de presupuestar. Las tarifas de Claude Sonnet 5.5 (entrada 2, salida 10, escritura de caché 2,50, lectura de caché 0,10 USD por millón) se verificaron en la documentación oficial el 5/11/2026. Son configuración del `.env` local, ligadas al modelo con `ANTHROPIC_PRICING_MODEL`; no están en el código.
 
 ## Notas
 
