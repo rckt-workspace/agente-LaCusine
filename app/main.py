@@ -9,6 +9,7 @@ from fastapi import FastAPI, Response
 from fastapi.responses import JSONResponse
 
 from app.api.demo import build_demo_router, normalise_public_origin
+from app.admin_api.wiring import build_admin_panel
 from app.api.webhook import router as webhook_router
 from app.core.config import Settings
 from app.core.env import load_if_enabled
@@ -54,6 +55,9 @@ def create_app(
     app.state.pool = pool
     app.state.webhook_repository = webhook_repository
     app.include_router(webhook_router)
+    admin_panel = build_admin_panel(settings, pool)  # None sin base o sin configuración de Supabase
+    if admin_panel is not None:
+        app.include_router(admin_panel)
 
     if settings.demo_enabled:
         # La demo solo existe en entorno aislado. Falla al arrancar si le falta algo: nunca queda a medias.

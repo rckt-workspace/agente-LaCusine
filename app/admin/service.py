@@ -226,6 +226,22 @@ class AdminService:
             # Cerrar una solicitud NO reactiva la IA. Eso exige resume_conversation.
             self._audit(conn, "human_handoff", handoff_id, "transition", current, to_state, reason, None)
 
+    def pause_conversation(self, conversation_id: UUID, reason: str) -> None:
+        """Pausa la automatización para que un asesor atienda. Solo desde 'automated'; transaccional y auditada."""
+        reason = check_reason(reason)
+        with self._transaction() as conn:
+            row = _lock(conn, "conversations", conversation_id, "automation_state")
+            if row != "automated":
+                raise AdminPolicyError("transition_not_allowed")
+            updated = conn.execute(
+                "update public.conversations set automation_state = 'paused_for_human' "
+                "where id = %s and automation_state = 'automated' returning id",
+                (conversation_id,),
+            ).fetchone()
+            if updated is None:
+                raise AdminPolicyError("state_changed_concurrently")
+            self._audit(conn, "conversation", conversation_id, "pause_automation", row, "paused_for_human", reason, None)
+
     def resume_conversation(self, conversation_id: UUID, reason: str) -> None:
         reason = check_reason(reason)
         with self._transaction() as conn:
