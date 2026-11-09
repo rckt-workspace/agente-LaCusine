@@ -1,0 +1,26 @@
+{
+  "name": "lacusine-whatsapp-web-connector",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Conector EXPERIMENTAL de WhatsApp Web (dispositivo vinculado). No oficial. Sin respuestas automáticas por defecto.",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test \"dist/test/*.test.js\"",
+    "start": "node dist/index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "6.7.24",
+    "pino": "9.5.0",
+    "qrcode-terminal": "0.12.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.10.2",
+    "@types/qrcode-terminal": "0.12.2",
+    "typescript": "5.7.2"
+  }
+}

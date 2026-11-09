@@ -14,6 +14,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import pilot_preflight  # noqa: E402
 import pilot_workers  # noqa: E402
 from app.integrations.llm import FakeLLMProvider  # noqa: E402
+from app.integrations.whatsapp_line import assess_line, is_meta_test_number  # noqa: E402
 from app.integrations.whatsapp_client import AuthRejectedError, CloudApiSender, SendRequest  # noqa: E402
 from app.worker.processor import EventProcessor  # noqa: E402
 from tests.agent.test_orchestrator import Harness, reply  # noqa: E402
@@ -260,9 +261,15 @@ PILOT_ENV = {
 }
 
 
-def _run_preflight(monkeypatch, counts):
+def _run_preflight(monkeypatch, counts, extra_env=None):
     for key, value in PILOT_ENV.items():
         monkeypatch.setenv(key, value)
+    # Las sobrescrituras van DESPUÉS del entorno base, para que una variable vacía de la prueba prevalezca.
+    for key, value in (extra_env or {}).items():
+        if value is None:
+            monkeypatch.delenv(key, raising=False)
+        else:
+            monkeypatch.setenv(key, value)
     monkeypatch.delenv("LACUSINE_LOAD_DOTENV", raising=False)
     monkeypatch.setattr(pilot_preflight, "check_meta_token", lambda *a, **k: (True, "vigente"))
     monkeypatch.setattr(pilot_preflight, "_pending_work", lambda url: counts)
@@ -297,28 +304,57 @@ def _identity_client(payload, status=200):
     return httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(status, json=payload)))
 
 
+EXPECTED_DISPLAY = "+573153863179"  # número de La Cuisine (no es de prueba)
+
+
+def _line(display, account="LIVE", verified="VERIFIED", status="CONNECTED"):
+    return {"account_mode": account, "verified": verified, "status": status, "display_phone": display}
+
+
 def test_test_number_is_not_a_production_line():
-    identity = {"account_mode": "SANDBOX", "verified": "VERIFIED", "status": "CONNECTED"}
-    assert pilot_preflight.is_production_line(identity) is False
+    assert pilot_preflight.is_production_line(_line("+573153863179", account="SANDBOX"), EXPECTED_DISPLAY) is False
 
 
-def test_live_verified_connected_line_is_production():
-    identity = {"account_mode": "LIVE", "verified": "VERIFIED", "status": "CONNECTED"}
-    assert pilot_preflight.is_production_line(identity) is True
+def test_meta_virtual_number_is_refused_even_when_every_status_looks_live():
+    # Caso real reportado: +1 555 con LIVE / VERIFIED / CONNECTED. Solo el número visible lo delata.
+    verdict = assess_line(_line("+1 555 164 2419"), "+15551642419")
+    assert verdict.ready_for_public is False
+    assert "numero_de_prueba_de_meta" in verdict.reasons
+
+
+def test_real_line_with_the_expected_number_is_production():
+    verdict = assess_line(_line("+57 315 386 3179"), EXPECTED_DISPLAY)
+    assert verdict.ready_for_public is True and verdict.reasons == ()
+
+
+def test_real_line_different_from_the_expected_number_is_refused():
+    verdict = assess_line(_line("+57 300 111 2233"), EXPECTED_DISPLAY)
+    assert verdict.ready_for_public is False and "numero_distinto_del_esperado" in verdict.reasons
+
+
+def test_missing_expected_number_or_visible_number_is_refused():
+    assert "numero_esperado_no_configurado" in assess_line(_line("+57 315 386 3179"), None).reasons
+    assert "numero_visible_desconocido" in assess_line(_line(None), EXPECTED_DISPLAY).reasons
+
+
+def test_meta_test_prefix_is_not_confused_with_other_us_or_colombian_numbers():
+    assert is_meta_test_number("+1 555 164 2419") is True
+    assert is_meta_test_number("+1 212 555 0100") is False
+    assert is_meta_test_number("+57 315 386 3179") is False
 
 
 def test_unverified_or_disconnected_live_line_is_not_production():
-    assert pilot_preflight.is_production_line({"account_mode": "LIVE", "verified": "NOT_VERIFIED",
-                                               "status": "CONNECTED"}) is False
-    assert pilot_preflight.is_production_line({"account_mode": "LIVE", "verified": "VERIFIED",
-                                               "status": "FLAGGED"}) is False
+    assert pilot_preflight.is_production_line(_line("+573153863179", verified="NOT_VERIFIED"),
+                                              EXPECTED_DISPLAY) is False
+    assert pilot_preflight.is_production_line(_line("+573153863179", status="FLAGGED"), EXPECTED_DISPLAY) is False
 
 
 def test_read_line_identity_returns_mode_without_leaking_the_token():
-    client = _identity_client({"id": "1", "account_mode": "LIVE", "code_verification_status": "VERIFIED",
-                               "status": "CONNECTED"})
+    client = _identity_client({"id": "1", "display_phone_number": "+57 315 386 3179", "account_mode": "LIVE",
+                               "code_verification_status": "VERIFIED", "status": "CONNECTED"})
     ok, identity = pilot_preflight.read_line_identity("token-secreto", "123456789012", "v26.0", client=client)
-    assert ok is True and identity == {"account_mode": "LIVE", "verified": "VERIFIED", "status": "CONNECTED"}
+    assert ok is True and identity == {"account_mode": "LIVE", "verified": "VERIFIED", "status": "CONNECTED",
+                                       "display_phone": "+57 315 386 3179"}
     assert "token-secreto" not in repr(identity)
 
 
@@ -337,9 +373,135 @@ def test_preflight_refuses_public_mode_on_a_test_number(monkeypatch, capsys):
     assert "Modo público: línea LIVE" in capsys.readouterr().out
 
 
-def test_preflight_accepts_public_mode_only_on_a_live_verified_line(monkeypatch):
-    monkeypatch.setenv("WHATSAPP_AUDIENCE_MODE", "public")
-    monkeypatch.setenv("WHATSAPP_PUBLIC_CONFIRMATION", "ABRIR_ATENCION_PUBLICA_CONFIRMADA")
-    monkeypatch.setattr(pilot_preflight, "read_line_identity",
-                        lambda *a, **k: (True, {"account_mode": "LIVE", "verified": "VERIFIED", "status": "CONNECTED"}))
+def _run_with_line(monkeypatch, capsys, *, mode, identity, expected=EXPECTED_DISPLAY, allowlist="573001112233"):
+    extra = {
+        "WHATSAPP_AUDIENCE_MODE": mode,
+        "WHATSAPP_EXPECTED_DISPLAY_NUMBER": expected,
+        "WHATSAPP_ALLOWED_RECIPIENTS": allowlist,
+    }
+    if mode == "public":
+        extra["WHATSAPP_PUBLIC_CONFIRMATION"] = "ABRIR_ATENCION_PUBLICA_CONFIRMADA"
+    monkeypatch.setattr(pilot_preflight, "read_line_identity", lambda *a, **k: (True, identity))
+    code = _run_preflight(monkeypatch, ALL_ZERO, extra_env=extra)
+    return code, capsys.readouterr().out
+
+
+def test_preflight_public_mode_accepts_a_real_line_without_any_recipient_list(monkeypatch, capsys):
+    code, out = _run_with_line(monkeypatch, capsys, mode="public", allowlist="",
+                               identity=_line("+57 315 386 3179"))
+    assert code == 0
+    assert "modo PÚBLICO" in out and "linea_apta_para_publico=si" in out
+    assert "Lista blanca de destinatarios no vacía" not in out
+
+
+def test_preflight_public_mode_refuses_the_meta_virtual_number_even_if_it_looks_live(monkeypatch, capsys):
+    code, out = _run_with_line(monkeypatch, capsys, mode="public", allowlist="",
+                               identity=_line("+1 555 164 2419"))
+    assert code == 1
+    assert "linea_apta_para_publico=no" in out and "numero_de_prueba_de_meta" in out
+    assert "RECHAZADO" in out and "+1 555" not in out  # el número completo nunca se imprime
+
+
+def test_preflight_public_mode_requires_the_expected_display_number(monkeypatch, capsys):
+    code, out = _run_with_line(monkeypatch, capsys, mode="public", allowlist="", expected=None,
+                               identity=_line("+57 315 386 3179"))
+    assert code == 1 and "numero_esperado_no_configurado" in out
+
+
+def test_preflight_test_allowlist_mode_still_requires_its_list(monkeypatch, capsys):
+    code, out = _run_with_line(monkeypatch, capsys, mode="test_allowlist", allowlist="",
+                               identity=_line("+57 315 386 3179"))
+    assert code == 1 and "Lista blanca de destinatarios no vacía" in out
+
+
+def test_preflight_test_allowlist_never_claims_public_readiness(monkeypatch, capsys):
+    code, out = _run_with_line(monkeypatch, capsys, mode="test_allowlist", identity=_line("+57 315 386 3179"))
+    assert code == 0
+    assert "linea_apta_para_publico=si" in out
+    assert "NO es atención pública" in out
+    assert "modo PÚBLICO" not in out
+
+
+# --- Transporte web (WhatsApp Web vinculado): el preflight no usa las variables de Meta ---
+
+WEB_SECRET = "s3cr3t-de-prueba-de-32-caracteres!!"
+
+
+def _web_env(monkeypatch, *, status, auto_reply="false", mode="test_allowlist"):
+    for key, value in PILOT_ENV.items():
+        monkeypatch.setenv(key, value)
+    for key in ("META_SEND_ENABLED", "WHATSAPP_DRY_RUN", "META_ACCESS_TOKEN", "META_PHONE_NUMBER_ID"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("WHATSAPP_TRANSPORT", "web_bridge")
+    monkeypatch.setenv("WEB_BRIDGE_URL", "http://127.0.0.1:8787")
+    monkeypatch.setenv("WEB_BRIDGE_SECRET", WEB_SECRET)
+    monkeypatch.setenv("WEB_BRIDGE_LINE_ID", "573153863179")
+    monkeypatch.setenv("WEB_BRIDGE_AUTO_REPLY", auto_reply)
+    monkeypatch.setenv("WHATSAPP_AUDIENCE_MODE", mode)
+    monkeypatch.setattr(pilot_preflight, "check_bridge_status", lambda *a, **k: status)
+    monkeypatch.setattr(pilot_preflight, "check_meta_token", lambda *a, **k: pytest.fail("no debe consultar Meta"))
+
+
+def test_preflight_web_transport_passes_with_a_connected_bridge_and_no_meta_checks(monkeypatch, capsys):
+    _web_env(monkeypatch, status=(True, {"connection": "open", "auto_reply": False, "killed": False}))
     assert _run_preflight(monkeypatch, ALL_ZERO) == 0
+    out = capsys.readouterr().out
+    assert "transporte=web_bridge" in out and "respuestas_automaticas_autorizadas=no" in out
+
+
+def test_preflight_web_transport_refuses_a_disconnected_session(monkeypatch, capsys):
+    _web_env(monkeypatch, status=(True, {"connection": "closed", "auto_reply": False, "killed": False}))
+    assert _run_preflight(monkeypatch, ALL_ZERO) == 1
+    assert "sesión vinculada y conectada" in capsys.readouterr().out
+
+
+def test_preflight_web_transport_refuses_when_the_bridge_is_unreachable(monkeypatch, capsys):
+    _web_env(monkeypatch, status=(False, {"error": "red:ConnectError"}))
+    assert _run_preflight(monkeypatch, ALL_ZERO) == 1
+    assert "alcanzable y firmado" in capsys.readouterr().out
+
+
+def test_preflight_web_transport_never_runs_in_public_mode(monkeypatch, capsys):
+    _web_env(monkeypatch, status=(True, {"connection": "open", "auto_reply": False, "killed": False}), mode="public")
+    monkeypatch.setenv("WHATSAPP_PUBLIC_CONFIRMATION", "ABRIR_ATENCION_PUBLICA_CONFIRMADA")
+    assert _run_preflight(monkeypatch, ALL_ZERO) == 1
+    assert "nunca en modo público" in capsys.readouterr().out
+
+
+def test_bridge_status_request_is_signed_and_returns_no_personal_data():
+    from app.integrations.web_bridge import verify
+
+    seen = {}
+
+    def handler(request):
+        seen["sig"] = request.headers["X-Bridge-Signature"]
+        seen["ts"] = request.headers["X-Bridge-Timestamp"]
+        return httpx.Response(200, json={"connection": "open", "auto_reply": False, "killed": False,
+                                         "jid": "should-not-leak"})
+
+    ok, status = pilot_preflight.check_bridge_status("http://127.0.0.1:8787", WEB_SECRET,
+                                                     client=httpx.Client(transport=httpx.MockTransport(handler)))
+    assert ok is True
+    assert verify(WEB_SECRET, "status", seen["ts"], b"", seen["sig"])
+    assert status == {"connection": "open", "auto_reply": False, "killed": False}
+    assert "should-not-leak" not in repr(status)
+
+
+def test_bridge_status_refuses_a_short_secret_without_any_request():
+    calls = []
+    ok, status = pilot_preflight.check_bridge_status("http://127.0.0.1:8787", "corto",
+                                                     client=httpx.Client(transport=httpx.MockTransport(
+                                                         lambda r: (calls.append(r), httpx.Response(200))[1])))
+    assert ok is False and calls == []
+
+
+def test_worker_profile_reports_send_enabled_from_auto_reply_on_the_web_transport():
+    from app.worker.profile import describe_worker_profile
+    from app.worker.config import WorkerSettings
+    from app.core.config import Settings
+
+    base = dict(meta_app_secret=None, meta_verify_token=None, whatsapp_transport="web_bridge",
+                meta_send_enabled=True, whatsapp_dry_run=False)
+    off = describe_worker_profile(Settings(**base, web_bridge_auto_reply=False), WorkerSettings.from_env(), None)
+    on = describe_worker_profile(Settings(**base, web_bridge_auto_reply=True), WorkerSettings.from_env(), None)
+    assert off["send_enabled"] is False and on["send_enabled"] is True

@@ -85,8 +85,8 @@ def test_two_workers_never_claim_the_same_event():
     try:
         for i in range(30):
             _insert(pool_a, f"wamid.P{i}", contact=f"5730000{i:05d}")
-        worker_a = JobRepository(pool_a, owner="worker-a", lease_seconds=60)
-        worker_b = JobRepository(pool_b, owner="worker-b", lease_seconds=60)
+        worker_a = JobRepository(pool_a, owner="worker-a", lease_seconds=120)
+        worker_b = JobRepository(pool_b, owner="worker-b", lease_seconds=120)
         seen: list = []
         lock = threading.Lock()
         barrier = threading.Barrier(2)
@@ -118,8 +118,8 @@ def test_same_contact_is_serialized_across_workers_in_arrival_order():
     try:
         for wamid in ("wamid.S1", "wamid.S2", "wamid.S3"):
             _insert(pool_a, wamid, contact="573009990001")
-        a = JobRepository(pool_a, owner="a", lease_seconds=60)
-        b = JobRepository(pool_b, owner="b", lease_seconds=60)
+        a = JobRepository(pool_a, owner="a", lease_seconds=120)
+        b = JobRepository(pool_b, owner="b", lease_seconds=120)
 
         first = a.claim(1, uuid.uuid4)
         assert [c.external_event_id for c in first] == ["wamid.S1"]
@@ -143,8 +143,8 @@ def test_different_contacts_and_different_business_lines_proceed_in_parallel():
         _insert(pool_a, "wamid.PAR1", contact="573008880001", phone="1000")
         _insert(pool_a, "wamid.PAR2", contact="573008880002", phone="1000")
         _insert(pool_a, "wamid.PAR3", contact="573008880001", phone="2000")  # misma persona, otra línea
-        a = JobRepository(pool_a, owner="a", lease_seconds=60)
-        b = JobRepository(pool_b, owner="b", lease_seconds=60)
+        a = JobRepository(pool_a, owner="a", lease_seconds=120)
+        b = JobRepository(pool_b, owner="b", lease_seconds=120)
         got_a = a.claim(1, uuid.uuid4)
         got_b = b.claim(1, uuid.uuid4)
         assert len(got_a) == 1 and len(got_b) == 1
@@ -158,7 +158,7 @@ def test_claim_does_not_return_events_already_finished():
     pool = _pool()
     try:
         _insert(pool, "wamid.FIN")
-        jobs = JobRepository(pool, owner="a", lease_seconds=60)
+        jobs = JobRepository(pool, owner="a", lease_seconds=120)
         claim = jobs.claim(1, uuid.uuid4)[0]
         assert jobs.finish(claim, "processed")
         assert jobs.claim(5, uuid.uuid4) == []
@@ -176,7 +176,7 @@ def test_expired_lease_is_recovered_and_stale_owner_is_rejected():
         stale = old.claim(1, uuid.uuid4)[0]
         age_all_leases(TEST_DATABASE_URL)  # el worker antiguo "muere" sin finalizar
 
-        new = JobRepository(pool_new, owner="new", lease_seconds=60)
+        new = JobRepository(pool_new, owner="new", lease_seconds=120)
         assert new.recover_expired(max_attempts=5) == 1
         fresh = new.claim(1, uuid.uuid4)[0]
         assert fresh.event_id == stale.event_id
@@ -224,7 +224,7 @@ def test_finish_requires_a_retry_delay_and_retry_sets_next_attempt():
     pool = _pool()
     try:
         _insert(pool, "wamid.RET")
-        jobs = JobRepository(pool, owner="a", lease_seconds=60)
+        jobs = JobRepository(pool, owner="a", lease_seconds=120)
         claim = jobs.claim(1, uuid.uuid4)[0]
         with pytest.raises(ValueError):
             jobs.finish(claim, "retry")
@@ -239,7 +239,7 @@ def test_finish_drops_payload_and_releases_contact_lease():
     pool = _pool()
     try:
         _insert(pool, "wamid.DROP")
-        jobs = JobRepository(pool, owner="a", lease_seconds=60)
+        jobs = JobRepository(pool, owner="a", lease_seconds=120)
         claim = jobs.claim(1, uuid.uuid4)[0]
         assert jobs.finish(claim, "processed") is True
         with psycopg.connect(TEST_DATABASE_URL, autocommit=True) as conn:
@@ -265,7 +265,7 @@ def test_worker_restart_resumes_pending_events():
 
     restarted_pool = _pool()
     try:
-        after = JobRepository(restarted_pool, owner="after-restart", lease_seconds=60)
+        after = JobRepository(restarted_pool, owner="after-restart", lease_seconds=120)
         after.recover_expired(max_attempts=5)
         resumed = after.claim(5, uuid.uuid4)
         assert sorted(c.external_event_id for c in resumed) == ["wamid.RESUME1", "wamid.RESUME2"]
@@ -487,7 +487,7 @@ def test_end_to_end_webhook_to_outbox_with_simulated_provider():
         _insert(pool, "wamid.E2E", contact="573004440099", phone="100200300400", body="Busco una cafetera Jura")
         settings = Settings(meta_app_secret=None, meta_verify_token=None, database_url=TEST_DATABASE_URL,
                             meta_phone_number_id="100200300400")
-        worker_settings = WorkerSettings(enabled=True, owner="e2e", max_concurrency=2, lease_seconds=60,
+        worker_settings = WorkerSettings(enabled=True, owner="e2e", max_concurrency=2, lease_seconds=120,
                                          processing_timeout_seconds=30)
         worker, worker_pool = build_worker(settings, worker_settings)
         worker_pool.open(wait=True, timeout=10)

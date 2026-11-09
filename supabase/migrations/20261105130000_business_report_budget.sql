@@ -21,7 +21,9 @@ create table if not exists public.analysis_budget_reservations (
   reserved_usd numeric(12, 6) not null check (reserved_usd >= 0),
   counted_usd  numeric(12, 6) not null default 0 check (counted_usd >= 0),
   created_at   timestamptz not null default now(),
-  reconciled_at timestamptz
+  reconciled_at timestamptz,
+  -- Una reserva liberada no cuenta: su importe contable debe ser cero (mismo invariante que budget_reservations).
+  constraint analysis_budget_released_zero check (status <> 'released' or counted_usd = 0)
 );
 
 create index if not exists analysis_budget_created_idx on public.analysis_budget_reservations (created_at);

@@ -59,6 +59,48 @@ def verify_webhook(request: Request) -> PlainTextResponse:
     return PlainTextResponse(content=challenge, status_code=status.HTTP_200_OK)
 
 
+def register_inbound_messages(messages, repository, outcomes: list | None = None) -> tuple[int, int, int]:
+    """Registro idempotente de mensajes entrantes. Compartido por Meta y por el transporte web.
+
+    Devuelve (aceptados, duplicados, conflictos). Un fallo de almacenamiento lanza HTTPException 503.
+    Si se pasa `outcomes`, se añade el resultado de cada mensaje en el mismo orden ("accepted", "duplicate",
+    "conflict"). No cambia nada más.
+    """
+    accepted = duplicates = conflicts = 0
+    for message in messages:
+        record = WebhookEventRecord(
+            external_event_id=message.message_id,
+            contact_wa_id=message.sender,
+            payload=message.raw,
+            payload_sha256=message.payload_sha256,
+            business_phone_id=message.business_phone_id,
+        )
+        try:
+            outcome = repository.register(record)
+        except StorageError as exc:
+            # Respuesta no exitosa: Meta reintenta. Los reintentos son seguros porque el registro es idempotente.
+            logger.error("webhook_storage_failed reason=%s", exc)
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="storage_unavailable")
+
+        if outcome is RegisterOutcome.NEW:
+            accepted += 1
+            logger.info("inbound_message_accepted sender=%s", mask_phone(message.sender))
+            if outcomes is not None:
+                outcomes.append("accepted")
+        elif outcome is RegisterOutcome.DUPLICATE:
+            duplicates += 1
+            logger.info("inbound_message_duplicate")
+            if outcomes is not None:
+                outcomes.append("duplicate")
+        else:
+            # Mismo wamid con contenido distinto: no se sobrescribe; queda registrado para revisión.
+            conflicts += 1
+            logger.warning("inbound_message_conflict")
+            if outcomes is not None:
+                outcomes.append("conflict")
+    return accepted, duplicates, conflicts
+
+
 @router.post("")
 async def receive_webhook(request: Request) -> Response:
     settings = request.app.state.settings
@@ -95,34 +137,7 @@ async def receive_webhook(request: Request) -> Response:
         if foreign:
             logger.warning("webhook_foreign_business_line_ignored count=%d", len(foreign))
 
-    accepted = 0
-    duplicates = 0
-    conflicts = 0
-    for message in messages:
-        record = WebhookEventRecord(
-            external_event_id=message.message_id,
-            contact_wa_id=message.sender,
-            payload=message.raw,
-            payload_sha256=message.payload_sha256,
-            business_phone_id=message.business_phone_id,
-        )
-        try:
-            outcome = repository.register(record)
-        except StorageError as exc:
-            # Respuesta no exitosa: Meta reintenta. Los reintentos son seguros porque el registro es idempotente.
-            logger.error("webhook_storage_failed reason=%s", exc)
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="storage_unavailable")
-
-        if outcome is RegisterOutcome.NEW:
-            accepted += 1
-            logger.info("inbound_message_accepted sender=%s", mask_phone(message.sender))
-        elif outcome is RegisterOutcome.DUPLICATE:
-            duplicates += 1
-            logger.info("inbound_message_duplicate")
-        else:
-            # Mismo wamid con contenido distinto: no se sobrescribe; queda registrado para revisión.
-            conflicts += 1
-            logger.warning("inbound_message_conflict")
+    accepted, duplicates, conflicts = register_inbound_messages(messages, repository)
 
     # Estados de entrega: se registran para correlacionarlos con el outbox. No cuentan en la respuesta de mensajes.
     try:

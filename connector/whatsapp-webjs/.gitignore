@@ -1,0 +1,9 @@
+# Sesión de WhatsApp Web (whatsapp-web.js / LocalAuth): NUNCA versionar.
+.wwebjs_auth/
+.wwebjs_cache/
+session/
+# Estado local del conector (STOP, cerrojos, rutas, logs): NUNCA versionar.
+state/
+node_modules/
+dist/
+*.log

@@ -141,7 +141,7 @@ def test_duplicate_handoff_request_creates_no_second_notice():
         pool.close()
 
 
-def _dispatcher(pool, notifier, max_attempts=3, lease_seconds=60):
+def _dispatcher(pool, notifier, max_attempts=3, lease_seconds=120):
     return AdvisorNotificationDispatcher(
         PostgresAdvisorNotificationRepository(pool, max_attempts=max_attempts), notifier,
         owner_token_factory=uuid.uuid4, lease_seconds=lease_seconds, batch_size=10,
@@ -185,7 +185,7 @@ def test_expired_lease_never_marks_a_notice_as_sent():
     try:
         PostgresHandoffRepository(pool).open(conv, "quote_request", "normal")
         repo = PostgresAdvisorNotificationRepository(pool, max_attempts=3)
-        claims = repo.claim(1, lease_seconds=60, token=uuid.uuid4())
+        claims = repo.claim(1, lease_seconds=120, token=uuid.uuid4())
         assert len(claims) == 1
         age_all_leases(TEST_DATABASE_URL)
         assert repo.expire_leases() == 1
@@ -239,9 +239,9 @@ def test_migration_runner_applies_once_and_refuses_modified_history(tmp_path):
             conn.execute("create role anon nologin") if not _role_exists("anon") else None
             conn.execute("create role authenticated nologin") if not _role_exists("authenticated") else None
         first = run_migrations(TEST_DATABASE_URL, files, apply=True)
-        assert len(first.applied) == len(files) == 17  # 13 publicadas + analítica + eventos/ventas + RLS + presupuesto informes
+        assert len(first.applied) == len(files) == 18  # 13 publicadas + analítica + eventos/ventas + RLS + presupuesto + FK restrict
         second = run_migrations(TEST_DATABASE_URL, files, apply=True)
-        assert second.applied == [] and len(second.up_to_date) == 17
+        assert second.applied == [] and len(second.up_to_date) == 18
 
         # Una copia con un archivo alterado: la herramienta debe negarse, sin tocar el original del repositorio.
         copied = tmp_path / "migrations"
@@ -302,7 +302,7 @@ def test_end_to_end_referral_worker_handoff_and_advisor_notice(tmp_path):
     client = TestClient(create_app(settings=settings, webhook_repository=PostgresWebhookEventRepository(web_pool, 7)))
     notifier = SimulatedAdvisorNotifier()
     worker, worker_pool = build_worker(
-        settings, WorkerSettings(enabled=True, owner="fase6-e2e", lease_seconds=60, processing_timeout_seconds=30),
+        settings, WorkerSettings(enabled=True, owner="fase6-e2e", lease_seconds=120, processing_timeout_seconds=30),
         sender=SimulatedWhatsAppSender(), advisor_notifier=notifier,
     )
     worker_pool.open(wait=True, timeout=10)
@@ -326,7 +326,7 @@ def test_end_to_end_referral_worker_handoff_and_advisor_notice(tmp_path):
 
         # 4. Un reinicio del worker no reenvía el aviso ya entregado.
         restarted, restarted_pool = build_worker(
-            settings, WorkerSettings(enabled=True, owner="fase6-restart", lease_seconds=60,
+            settings, WorkerSettings(enabled=True, owner="fase6-restart", lease_seconds=120,
                                      processing_timeout_seconds=30),
             sender=SimulatedWhatsAppSender(), advisor_notifier=notifier,
         )

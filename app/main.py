@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -11,10 +12,25 @@ from fastapi.responses import JSONResponse
 from app.api.demo import build_demo_router, normalise_public_origin
 from app.admin_api.wiring import build_admin_panel
 from app.api.webhook import router as webhook_router
+from app.api.web_bridge import router as web_bridge_router
 from app.core.config import Settings
 from app.core.env import load_if_enabled
 from app.db.pool import create_pool
 from app.repositories.webhook_events import PostgresWebhookEventRepository, WebhookEventRepository
+
+
+def _ensure_lacusine_logging() -> None:
+    """Los registros de rechazo del puente (stage=03_inbound_rejected) son INFO: sin esto no salen de FastAPI.
+    Solo añade un manejador si el logger 'lacusine' no tiene ninguno (el worker ya configura el suyo)."""
+    lacusine = logging.getLogger("lacusine")
+    lacusine.setLevel(logging.INFO)
+    if not lacusine.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
+        lacusine.addHandler(handler)
+
+
+_ensure_lacusine_logging()
 
 
 @asynccontextmanager
@@ -55,6 +71,8 @@ def create_app(
     app.state.pool = pool
     app.state.webhook_repository = webhook_repository
     app.include_router(webhook_router)
+    # Solo responde si WHATSAPP_TRANSPORT=web_bridge y WEB_BRIDGE_AUTO_REPLY=true; en otro caso 404.
+    app.include_router(web_bridge_router)
     admin_panel = build_admin_panel(settings, pool)  # None sin base o sin configuración de Supabase
     if admin_panel is not None:
         app.include_router(admin_panel)

@@ -9,6 +9,8 @@ Reglas:
 - Un archivo ya aplicado cuyo contenido cambió (hash distinto) detiene la operación. No se reescribe el historial.
 - La URL llega por DATABASE_URL (o --database-url-env). Nunca se imprime.
 - Debe ejecutarse con el rol propietario del esquema, no con lacusine_backend.
+- Si existe supabase_migrations.schema_migrations (historial de Supabase CLI), --apply se rechaza antes de escribir.
+  En Cloud el historial lo gestiona solo `supabase db push`. El dry-run sigue funcionando y lo indica en "cli_managed".
 """
 
 from __future__ import annotations
@@ -57,6 +59,8 @@ class MigrationReport:
     applied: list[str] = field(default_factory=list)
     pending: list[str] = field(default_factory=list)
     up_to_date: list[str] = field(default_factory=list)
+    # True si el proyecto lo gestiona Supabase CLI (supabase_migrations.schema_migrations existe).
+    cli_managed: bool = False
 
 
 def load_migrations(directory: Path) -> list[MigrationFile]:
@@ -75,6 +79,20 @@ def load_migrations(directory: Path) -> list[MigrationFile]:
 def run_migrations(url: str, files: list[MigrationFile], apply: bool) -> MigrationReport:
     report = MigrationReport()
     with psycopg.connect(url, autocommit=True) as conn:
+        # Una sola fuente de verdad en Cloud: si Supabase CLI registró el historial, este runner no escribe nada.
+        # La comprobación va ANTES del bootstrap para no crear public.schema_migrations en un proyecto gestionado por la CLI.
+        # Si el estado no puede determinarse, se detiene en ensayo y en aplicación: nunca se escribe a ciegas.
+        try:
+            cli_managed = conn.execute(
+                "select to_regclass('supabase_migrations.schema_migrations') is not null"
+            ).fetchone()[0]
+        except psycopg.Error:
+            raise MigrationError("cli_history_unknown") from None
+        if not isinstance(cli_managed, bool):
+            raise MigrationError("cli_history_unknown")
+        report.cli_managed = cli_managed
+        if apply and report.cli_managed:
+            raise MigrationError("supabase_cli_history_present")
         if apply:
             conn.execute(BOOTSTRAP_SQL)
         registry = conn.execute("select to_regclass('public.schema_migrations')").fetchone()[0]
@@ -128,6 +146,7 @@ def _main(argv: list[str] | None = None) -> int:
         print(json.dumps({"error": "database_unavailable"}))
         return 1
     print(json.dumps({"applied": report.applied, "pending": report.pending, "up_to_date": report.up_to_date,
+                      "cli_managed": report.cli_managed,
                       "mode": "apply" if args.apply else "dry-run"}, ensure_ascii=False, indent=2))
     return 0
 

@@ -108,7 +108,7 @@ def _settings(**extra):
 
 def _dispatcher(pool, sender, owner="d1"):
     return OutboxDispatcher(repository=OutboundRepository(pool), sender=sender, business_phone_id=LINE,
-                            owner=owner, lease_seconds=60, max_attempts=3, backoff_base_seconds=5,
+                            owner=owner, lease_seconds=120, max_attempts=3, backoff_base_seconds=5,
                             backoff_max_seconds=900, batch_size=10)
 
 
@@ -187,7 +187,7 @@ def test_message_arriving_during_human_attention_gets_no_automatic_reply():
         event.register(WebhookEventRecord(external_event_id="wamid.DURING", contact_wa_id=RECIPIENT, payload=body,
                                           payload_sha256="c" * 64, business_phone_id=LINE))
         sender = SimulatedWhatsAppSender()
-        worker, worker_pool = build_worker(_settings(), WorkerSettings(enabled=True, owner="h1", lease_seconds=60,
+        worker, worker_pool = build_worker(_settings(), WorkerSettings(enabled=True, owner="h1", lease_seconds=120,
                                                                        processing_timeout_seconds=30), sender=sender)
         worker_pool.open(wait=True, timeout=10)
         try:

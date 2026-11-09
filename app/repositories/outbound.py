@@ -3,7 +3,8 @@
 Garantías:
   * Reclamo atómico (SKIP LOCKED) y propiedad por token: solo el dueño puede cerrar el envío.
   * Orden por conversación: no se reclama un mensaje si hay uno anterior de la misma conversación
-    pendiente, en envío o incierto.
+    pendiente o en envío. Un envío INCIERTO no bloquea la conversación: no se reenvía nunca, queda
+    para conciliación manual, y las respuestas nuevas del mismo cliente sí pueden salir.
   * Un envío con lease vencido pasa a 'uncertain': nunca vuelve a 'pending' por sí solo, porque
     la solicitud pudo haber llegado a Meta.
   * Las transiciones de estado de Meta solo avanzan según una tabla explícita. Los estados
@@ -77,7 +78,7 @@ class OutboundRepository:
                                   select 1 from public.outbound_messages p
                                   where p.conversation_id = o.conversation_id
                                     and (p.created_at, p.id) < (o.created_at, o.id)
-                                    and p.delivery_status in ('pending', 'sending', 'uncertain')
+                                    and p.delivery_status in ('pending', 'sending')
                               )
                             order by o.created_at, o.id
                             limit %(limit)s

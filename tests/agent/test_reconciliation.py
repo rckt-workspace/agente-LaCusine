@@ -95,3 +95,17 @@ def test_simulated_provider_never_creates_reservations():
     h.provider.script = [reply("ok")]
     h.ask("cafetera", call_id="wamid.SIM")
     assert h.cost.reservation_state("wamid.SIM") is None
+
+
+def test_usage_write_failure_after_a_real_reply_keeps_reservation_reserved_and_never_calls_again():
+    # El modelo respondió, pero el consumo no se pudo registrar: la reserva NO se liquida ni se libera a ciegas.
+    from tests.agent.fakes import FailingUsageStore
+
+    h, provider = _harness([reply("Te muestro opciones.")], usage=FailingUsageStore())
+    with pytest.raises(StorageError):
+        h.ask("Busco una cafetera", call_id="wamid.UW")
+    assert h.cost.reservation_state("wamid.UW") == "reserved"
+
+    second = h.ask("Busco una cafetera", call_id="wamid.UW")
+    assert second.status is OutcomeStatus.REQUIRES_RECONCILIATION
+    assert len(provider.calls) == 1  # ninguna segunda llamada facturable para el mismo mensaje

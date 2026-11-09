@@ -1,0 +1,8 @@
+# Sesión de WhatsApp Web (credenciales de vinculación): NUNCA versionar.
+.auth/
+# Estado local del conector (kill switch, caché): NUNCA versionar.
+state/
+# Compilación y dependencias.
+node_modules/
+dist/
+*.log

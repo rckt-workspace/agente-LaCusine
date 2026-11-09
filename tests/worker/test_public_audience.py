@@ -17,6 +17,7 @@ from app.worker.bootstrap import build_worker
 from app.worker.config import WorkerSettings
 
 PHONE = "123456789012"
+EXPECTED_DISPLAY = "+573153863179"  # número real de La Cuisine (no es de prueba)
 CLIENT_A = "573001112233"
 CLIENT_B = "573009998877"  # cliente no listado en ninguna lista de prueba
 
@@ -28,6 +29,7 @@ def _public_settings(**overrides) -> Settings:
         meta_access_token="token-sintetico", meta_graph_api_version="v26.0",
         meta_send_enabled=True, whatsapp_dry_run=False, whatsapp_audience_mode="public",
         whatsapp_public_confirmation=PUBLIC_CONFIRMATION_TOKEN, whatsapp_allowed_recipients=(),
+        whatsapp_expected_display_number=EXPECTED_DISPLAY,
         llm_provider="anthropic", agent_dry_run=False, anthropic_enabled=True,
         anthropic_api_key="clave-sintetica", anthropic_model="claude-sonnet-5-5",
         anthropic_pricing_model="claude-sonnet-5-5", price_input_usd_per_mtok=Decimal("2"),
@@ -81,6 +83,29 @@ def test_unknown_audience_mode_is_refused():
 ])
 def test_public_mode_refuses_incomplete_or_non_production_configuration(override, problem):
     assert problem in audience_problems(_public_settings(**override))
+
+
+@pytest.mark.parametrize("expected", [None, "", "   ", "abc"])
+def test_public_mode_requires_an_expected_display_number(expected):
+    assert "public_mode_requires_expected_display_number" in audience_problems(
+        _public_settings(whatsapp_expected_display_number=expected))
+
+
+@pytest.mark.parametrize("expected", ["+1 555 164 2419", "+15551642419"])
+def test_public_mode_refuses_a_meta_virtual_number_as_expected_number(expected):
+    assert "public_mode_refuses_meta_test_number" in audience_problems(
+        _public_settings(whatsapp_expected_display_number=expected))
+
+
+def test_public_mode_does_not_require_the_recipient_list():
+    # La lista de prueba puede estar vacía o llena: en público no altera el arranque.
+    assert audience_problems(_public_settings(whatsapp_allowed_recipients=())) == []
+    assert audience_problems(_public_settings(whatsapp_allowed_recipients=(CLIENT_A,))) == []
+
+
+def test_test_allowlist_mode_does_not_require_the_public_number_or_confirmation():
+    settings = Settings(meta_app_secret=None, meta_verify_token=None, whatsapp_audience_mode="test_allowlist")
+    assert audience_problems(settings) == []
 
 
 # --- Comportamiento del cliente de envío ---

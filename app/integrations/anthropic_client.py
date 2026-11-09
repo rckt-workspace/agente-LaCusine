@@ -36,6 +36,13 @@ from app.integrations.llm import (
 logger = logging.getLogger("lacusine.agent.anthropic")
 PROVIDER_NAME = "anthropic"
 BACKOFF_BASE_SECONDS = 0.5
+
+
+def worst_case_call_seconds(timeout_seconds: float, max_retries: int) -> float:
+    """Peor duración de una llamada: espera de semáforo + intentos con timeout + backoff entre intentos."""
+    attempts = max_retries + 1
+    backoff = sum(BACKOFF_BASE_SECONDS * (2**i) for i in range(max_retries))
+    return timeout_seconds * (attempts + 1) + backoff
 # Valores según la documentación oficial de Anthropic (guía de migración de Sonnet 5.5):
 #  * claude-sonnet-5-5 admite "adaptive" y "between_tools". "disabled" devuelve 400 en este modelo.
 #  * "between_tools" no genera pensamiento inicial; sin herramientas la respuesta es solo texto.

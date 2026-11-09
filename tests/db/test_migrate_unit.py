@@ -15,8 +15,9 @@ def test_repository_migrations_load_in_order_with_valid_names():
     assert names == sorted(names)
     # 13 publicadas + consolidación de analítica (20261105100000) + eventos y ventas comerciales (20261105110000)
     # + políticas RLS de esas tablas (20261105120000) + presupuesto de informes con IA (20261105130000).
-    assert len(names) == 17
-    assert names[-1] == "20261105130000_business_report_budget.sql"
+    # + corrección de historial comercial con ON DELETE RESTRICT (20261105140000).
+    assert len(names) == 18
+    assert names[-1] == "20261105140000_commercial_history_fk_restrict.sql"
     assert all(len(f.sha256) == 64 for f in files)
 
 

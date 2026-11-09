@@ -22,6 +22,7 @@ from app.repositories.crm import (
     PostgresMessageRepository,
     PostgresRecentTurnsReader,
 )
+from app.integrations.web_bridge import WebBridgeSender
 from app.integrations.whatsapp_client import CloudApiSender, SimulatedWhatsAppSender
 from app.repositories.jobs import JobRepository
 from app.repositories.outbound import OutboundRepository
@@ -41,6 +42,34 @@ from app.worker.runner import Worker
 logger = logging.getLogger("lacusine.worker")
 
 
+def select_sender(settings: Settings):
+    """Remitente real según WHATSAPP_TRANSPORT. Selección explícita: con web_bridge nunca se construye CloudApiSender
+    y un fallo del puente nunca cae en Meta Cloud API. Sin efectos de red al construir."""
+    transport = settings.whatsapp_transport
+    if transport == "web_bridge":
+        # Transporte experimental (no oficial). Sin WEB_BRIDGE_AUTO_REPLY=true el remitente no envía nada.
+        return WebBridgeSender(
+            url=settings.web_bridge_url, secret=settings.web_bridge_secret,
+            line_id=settings.web_bridge_line_id, auto_reply=settings.web_bridge_auto_reply,
+            allowed_recipients=settings.whatsapp_allowed_recipients, audience_mode=settings.whatsapp_audience_mode,
+            inbound_mode=settings.web_bridge_inbound_mode, inbound_until=settings.web_bridge_inbound_until,
+            timeout_seconds=settings.whatsapp_timeout_seconds,
+        )
+    if transport == "cloud_api":
+        return CloudApiSender(
+            access_token=settings.meta_access_token,
+            phone_number_id=settings.meta_phone_number_id,
+            graph_api_version=settings.meta_graph_api_version,
+            allowed_recipients=settings.whatsapp_allowed_recipients,
+            send_enabled=settings.meta_send_enabled,
+            dry_run=settings.whatsapp_dry_run,
+            timeout_seconds=settings.whatsapp_timeout_seconds,
+            max_concurrency=settings.whatsapp_max_concurrency,
+            audience_mode=settings.whatsapp_audience_mode,
+        )
+    raise ValueError("transport_unknown")
+
+
 def build_worker(settings: Settings, worker_settings: WorkerSettings, stop_event: threading.Event | None = None,
                  sender=None, advisor_notifier=None):
     """Devuelve (worker, pool). El llamador abre y cierra el pool.
@@ -49,12 +78,19 @@ def build_worker(settings: Settings, worker_settings: WorkerSettings, stop_event
     """
     if not settings.database_url:
         raise ValueError("database_url_missing")
-    if not settings.meta_phone_number_id:
+    if not settings.active_line_id():
         # Sin línea de negocio el worker no puede aislar conversaciones: falla cerrado al arrancar.
-        raise ValueError("meta_phone_number_id_missing")
+        raise ValueError(
+            "web_bridge_line_id_missing" if settings.whatsapp_transport == "web_bridge" else "meta_phone_number_id_missing"
+        )
     problems = worker_profile_problems(settings, real_sender=sender is None)
     if sender is None:
         problems = problems + audience_problems(settings)
+    from app.integrations.anthropic_client import worst_case_call_seconds
+    needed = worst_case_call_seconds(settings.anthropic_timeout_seconds, settings.anthropic_max_retries) + 30
+    if worker_settings.lease_seconds < needed:
+        # Si el lease vence durante una llamada en curso, otro proceso podría reclamar el evento.
+        problems = problems + ["lease_too_short_for_llm"]
     if problems:
         # Configuración incoherente: el worker no arranca y lo dice, en lugar de operar en silencio.
         raise ValueError(problems[0])
@@ -76,17 +112,8 @@ def build_worker(settings: Settings, worker_settings: WorkerSettings, stop_event
     if sender is None and settings.demo_enabled:
         # Demostración: el despacho es simulado. Nunca llega a Meta aunque el worker procese mensajes.
         sender = SimulatedWhatsAppSender()
-    sender = sender or CloudApiSender(
-        access_token=settings.meta_access_token,
-        phone_number_id=settings.meta_phone_number_id,
-        graph_api_version=settings.meta_graph_api_version,
-        allowed_recipients=settings.whatsapp_allowed_recipients,
-        send_enabled=settings.meta_send_enabled,
-        dry_run=settings.whatsapp_dry_run,
-        timeout_seconds=settings.whatsapp_timeout_seconds,
-        max_concurrency=settings.whatsapp_max_concurrency,
-        audience_mode=settings.whatsapp_audience_mode,
-    )
+    if sender is None:
+        sender = select_sender(settings)
 
     conversation_reader = PostgresConversationStateReader(pool)
     agent = build_commercial_agent(
@@ -112,7 +139,7 @@ def build_worker(settings: Settings, worker_settings: WorkerSettings, stop_event
         handoffs=handoffs,
         outbox=outbox,
         retention_days=settings.webhook_event_retention_days,
-        expected_business_phone_id=settings.meta_phone_number_id,
+        expected_business_phone_id=settings.active_line_id(),
         outbound=outbound,
         typing=typing,
         contact_limits=(settings.contact_max_inbound_per_hour, settings.contact_max_inbound_per_day),
@@ -122,7 +149,7 @@ def build_worker(settings: Settings, worker_settings: WorkerSettings, stop_event
     dispatcher = OutboxDispatcher(
         repository=outbound,
         sender=sender,
-        business_phone_id=settings.meta_phone_number_id,
+        business_phone_id=settings.active_line_id(),
         owner=worker_settings.owner,
         lease_seconds=worker_settings.lease_seconds,
         max_attempts=worker_settings.max_attempts,
@@ -141,7 +168,7 @@ def build_worker(settings: Settings, worker_settings: WorkerSettings, stop_event
         batch_size=worker_settings.batch_size,
     )
     logger.info("worker_profile %s typing_indicator=%s",
-                format_profile(describe_worker_profile(settings, worker_settings, provider)),
+                format_profile(describe_worker_profile(settings, worker_settings, provider, sender=sender)),
                 "on" if typing is not None else "off")
     return Worker(worker_settings, jobs, processor, stop_event=stop_event, dispatcher=dispatcher,
                   notifications=notifications), pool

@@ -25,16 +25,24 @@ def database_environment(database_url: str | None) -> str:
     return f"{host}/{name}"
 
 
-def describe_worker_profile(settings: Settings, worker_settings: WorkerSettings, provider) -> dict[str, Any]:
+def describe_worker_profile(settings: Settings, worker_settings: WorkerSettings, provider,
+                            sender=None) -> dict[str, Any]:
+    """`sender` es el objeto realmente construido por el worker: su clase se registra tal cual, sin inferirla."""
     provider_name = provider.name if provider is not None else "disabled"
     model = provider.model if provider is not None else None
-    send_enabled = bool(settings.meta_send_enabled and not settings.whatsapp_dry_run)
+    if settings.whatsapp_transport == "web_bridge":
+        # En el transporte web el envío lo autoriza WEB_BRIDGE_AUTO_REPLY, no las variables de Meta.
+        send_enabled = bool(settings.web_bridge_auto_reply)
+    else:
+        send_enabled = bool(settings.meta_send_enabled and not settings.whatsapp_dry_run)
     fields: dict[str, Any] = {
         "worker_id": worker_settings.owner,
         "provider": provider_name,
         "model": model,
         "dry_run": bool(settings.agent_dry_run),
         "send_enabled": send_enabled,
+        "whatsapp_transport": settings.whatsapp_transport,
+        "sender_class": type(sender).__name__ if sender is not None else None,
         "database_environment": database_environment(settings.database_url),
         "kill_switch": bool(settings.agent_kill_switch),
         "recipients_allowlisted": len(settings.whatsapp_allowed_recipients),
@@ -60,7 +68,8 @@ def configuration_fingerprint(fields: dict[str, Any]) -> str:
 def format_profile(fields: dict[str, Any]) -> str:
     """Línea de registro `clave=valor` en un orden fijo y estable."""
     order = (
-        "worker_id", "provider", "model", "dry_run", "send_enabled", "database_environment",
+        "worker_id", "provider", "model", "dry_run", "whatsapp_transport", "sender_class", "send_enabled",
+        "database_environment",
         "kill_switch", "audience_mode", "recipients_allowlisted", "daily_budget_usd", "monthly_budget_usd",
         "interaction_limit_usd", "graph_api_version", "batch_size", "max_concurrency", "configuration_fingerprint",
     )

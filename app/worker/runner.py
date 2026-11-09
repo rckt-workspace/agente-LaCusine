@@ -129,7 +129,12 @@ class Worker:
         logger.info("worker_started owner=%s concurrency=%d", self._settings.owner, self._settings.max_concurrency)
         try:
             while not self._stop.is_set():
-                claimed = self.run_once()
+                try:
+                    claimed = self.run_once()
+                except Exception as exc:  # noqa: BLE001 - el bucle no debe morir por un error inesperado de un ciclo
+                    # Solo el tipo: el mensaje puede contener datos. Los leases pendientes se recuperan solos.
+                    logger.error("worker_loop_error kind=%s continuing=true", type(exc).__name__)
+                    claimed = 0
                 if claimed == 0:
                     self._stop.wait(self._settings.poll_interval_seconds)
         finally:

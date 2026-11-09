@@ -50,7 +50,7 @@ def _settings():
 
 
 def _worker_cycle(settings, owner):
-    worker, pool = build_worker(settings, WorkerSettings(enabled=True, owner=owner, lease_seconds=60,
+    worker, pool = build_worker(settings, WorkerSettings(enabled=True, owner=owner, lease_seconds=120,
                                                          processing_timeout_seconds=30))
     pool.open(wait=True, timeout=10)
     try:

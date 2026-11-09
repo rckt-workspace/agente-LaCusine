@@ -102,7 +102,7 @@ def _status_of(outbound_id):
 def _dispatcher(pool, sender, owner="w1"):
     return OutboxDispatcher(
         repository=OutboundRepository(pool), sender=sender, business_phone_id=PHONE_ID, owner=owner,
-        lease_seconds=60, max_attempts=3, backoff_base_seconds=5, backoff_max_seconds=900, batch_size=5,
+        lease_seconds=120, max_attempts=3, backoff_base_seconds=5, backoff_max_seconds=900, batch_size=5,
     )
 
 
@@ -339,7 +339,7 @@ def test_meta_confirmation_recovers_an_uncertain_send():
 
 def test_database_loss_during_dispatch_does_not_crash_the_worker_loop():
     pool = _pool()
-    worker_settings = WorkerSettings(enabled=True, owner="resilience", lease_seconds=60, processing_timeout_seconds=30)
+    worker_settings = WorkerSettings(enabled=True, owner="resilience", lease_seconds=120, processing_timeout_seconds=30)
     settings = Settings(meta_app_secret=None, meta_verify_token=None, database_url=TEST_DATABASE_URL, meta_phone_number_id=PHONE_ID)
     worker, worker_pool = build_worker(settings, worker_settings, sender=SimulatedWhatsAppSender())
     worker_pool.open(wait=True, timeout=10)
@@ -385,7 +385,7 @@ def test_end_to_end_webhook_worker_outbox_meta_simulated_and_status_delivered():
     client = TestClient(create_app(settings=settings, webhook_repository=PostgresWebhookEventRepository(pool, 7)))
     simulator = SimulatedWhatsAppSender()
     worker, worker_pool = build_worker(
-        settings, WorkerSettings(enabled=True, owner="e2e", lease_seconds=60, processing_timeout_seconds=30),
+        settings, WorkerSettings(enabled=True, owner="e2e", lease_seconds=120, processing_timeout_seconds=30),
         sender=simulator,
     )
     worker_pool.open(wait=True, timeout=10)

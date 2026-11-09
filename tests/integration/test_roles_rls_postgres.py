@@ -203,7 +203,7 @@ def test_app_role_runs_the_backend_flow_through_rls():
             conn.execute("select count(*) from public.products").fetchone()
             conn.execute("select count(*) from public.llm_usage_events").fetchone()
 
-        jobs = JobRepository(pool, owner="role-worker", lease_seconds=60)
+        jobs = JobRepository(pool, owner="role-worker", lease_seconds=120)
         claimed = jobs.claim(5, uuid.uuid4)
         assert [c.external_event_id for c in claimed] == ["wamid.ROLE-1"]
 
@@ -329,7 +329,7 @@ def test_end_to_end_webhook_worker_outbox_with_app_role_only():
     web_pool.open(wait=True, timeout=10)
     simulator = SimulatedWhatsAppSender()
     worker, worker_pool = build_worker(
-        settings, WorkerSettings(enabled=True, owner="roles-e2e", lease_seconds=60, processing_timeout_seconds=30),
+        settings, WorkerSettings(enabled=True, owner="roles-e2e", lease_seconds=120, processing_timeout_seconds=30),
         sender=simulator,
     )
     worker_pool.open(wait=True, timeout=10)

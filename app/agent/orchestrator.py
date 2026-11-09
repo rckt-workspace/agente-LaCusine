@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from collections import Counter
 from dataclasses import dataclass, field
 from decimal import Decimal
@@ -215,10 +216,12 @@ class CommercialAgent:
         except LLMError as exc:
             logger.warning("agent_provider_error call_id=%s code=%s billed=%s", call_id, exc.code, exc.billed_state)
             if billable:
+                # Transición de estado idempotente (solo actúa si la reserva sigue en 'reserved'): se reintenta
+                # ante fallos transitorios de base. Si nunca se confirma, la reserva queda 'reserved' y va a conciliación.
                 if exc.billed_state == "not_billed":
-                    self._cost.release_reservation(call_id)
+                    self._transition_with_retry(call_id, self._cost.release_reservation)
                 else:
-                    self._cost.mark_uncertain(call_id)
+                    self._transition_with_retry(call_id, self._cost.mark_uncertain)
             self._record_failure_safely(call_id, conversation_id, exc.code)
             return AgentOutcome(
                 OutcomeStatus.PROVIDER_ERROR, error_code=exc.code, dry_run=dry_run, billed_state=exc.billed_state,
@@ -304,6 +307,21 @@ class CommercialAgent:
             messages=(ChatMessage(role="user", content=user_content),),
             max_output_tokens=self._settings.max_output_tokens,
         )
+
+    def _transition_with_retry(self, call_id: str, action) -> bool:
+        """Aplica una transición de reserva con reintentos acotados ante StorageError. Nunca llama al proveedor."""
+        attempts = 3
+        for attempt in range(1, attempts + 1):
+            try:
+                action(call_id)
+                return True
+            except StorageError:
+                logger.warning("reservation_transition_retry call_id=%s attempt=%d", call_id, attempt)
+                if attempt < attempts:
+                    time.sleep(0.5 * attempt)
+        # La reserva queda en 'reserved': el siguiente intento la enviará a conciliación, sin llamar al modelo.
+        logger.error("reservation_transition_failed call_id=%s state_kept=reserved", call_id)
+        return False
 
     def _record_failure_safely(self, call_id: str, conversation_id: UUID, code: str) -> None:
         try:

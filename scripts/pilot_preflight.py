@@ -19,8 +19,10 @@ sys.path.insert(0, str(ROOT))
 from app.agent.factory import requires_real_provider, select_provider, worker_profile_problems  # noqa: E402
 from app.core.config import Settings  # noqa: E402
 from app.core.env import load_if_enabled  # noqa: E402
+from app.integrations.whatsapp_line import assess_line, digits_only  # noqa: E402
 from app.worker.config import WorkerSettings  # noqa: E402
 from app.worker.profile import describe_worker_profile, format_profile  # noqa: E402
+from app.worker.bootstrap import select_sender  # noqa: E402
 
 
 def _check(label: str, ok: bool, failures: list[str]) -> None:
@@ -38,7 +40,7 @@ def read_line_identity(token: str, phone_id: str, graph_version: str, client=Non
     import httpx
 
     http = client or httpx.Client(timeout=15)
-    fields = "id,account_mode,code_verification_status,status"
+    fields = "id,display_phone_number,account_mode,code_verification_status,status"
     try:
         response = http.get(f"https://graph.facebook.com/{graph_version}/{phone_id}", params={"fields": fields},
                             headers={"Authorization": f"Bearer {token}"})
@@ -54,11 +56,42 @@ def read_line_identity(token: str, phone_id: str, graph_version: str, client=Non
     data = response.json()
     return True, {"account_mode": data.get("account_mode"),
                   "verified": data.get("code_verification_status"),
-                  "status": data.get("status")}
+                  "status": data.get("status"),
+                  "display_phone": data.get("display_phone_number")}
 
 
-def is_production_line(identity: dict) -> bool:
-    return identity.get("account_mode") == "LIVE" and identity.get("verified") == "VERIFIED"         and identity.get("status") == "CONNECTED"
+def is_production_line(identity: dict, expected_display: str | None = None) -> bool:
+    """Compatibilidad: True solo si la línea cumple TODOS los criterios de atención pública (ver whatsapp_line)."""
+    return assess_line(identity, expected_display).ready_for_public
+
+
+def check_bridge_status(url: str, secret: str, client=None) -> tuple[bool, dict]:
+    """Estado del puente WhatsApp Web (solo lectura, firmado). No envía ni devuelve datos personales."""
+    import time
+
+    import httpx
+
+    from app.integrations.web_bridge import sign
+
+    if not url or len(secret) < 32:
+        return False, {"error": "configuracion_incompleta"}
+    stamp = str(int(time.time()))
+    headers = {"X-Bridge-Timestamp": stamp, "X-Bridge-Signature": sign(secret, "status", stamp, b"")}
+    http = client or httpx.Client(timeout=10)
+    try:
+        response = http.get(f"{url.rstrip('/')}/status", headers=headers)
+    except httpx.HTTPError as exc:
+        return False, {"error": f"red:{type(exc).__name__}"}
+    if response.status_code != 200:
+        return False, {"error": f"http={response.status_code}"}
+    data = response.json()
+    return True, {"connection": data.get("connection"), "auto_reply": data.get("auto_reply"),
+                  "killed": data.get("killed")}
+
+
+def masked_display(display: str | None) -> str:
+    digits = digits_only(display)
+    return ("***" + digits[-4:]) if len(digits) >= 4 else "desconocido"
 
 
 def check_meta_token(token: str, phone_id: str, graph_version: str, client=None) -> tuple[bool, str]:
@@ -67,10 +100,6 @@ def check_meta_token(token: str, phone_id: str, graph_version: str, client=None)
     if valid:
         return True, "vigente"
     return False, identity.get("error", "error")
-    try:
-        error = response.json().get("error", {})
-    except ValueError:
-        error = {}
 
 # Clasificación de la cola. Solo CRÍTICO impide el arranque.
 # CRÍTICO: puede enviar, cobrar o duplicar algo ahora mismo, o implica un segundo worker.
@@ -170,14 +199,48 @@ def main() -> int:
     _check("Presupuesto diario o mensual configurado",
            settings.agent_daily_budget_usd is not None or settings.agent_monthly_budget_usd is not None, failures)
     _check("Kill switch desactivado", settings.agent_kill_switch is False, failures)
-    _check("Envío a Meta habilitado (META_SEND_ENABLED=true)", settings.meta_send_enabled is True, failures)
-    _check("WHATSAPP_DRY_RUN=false", settings.whatsapp_dry_run is False, failures)
-    _check("Lista blanca de destinatarios no vacía", len(settings.whatsapp_allowed_recipients) > 0, failures)
-    print(f"destinatarios_autorizados={len(settings.whatsapp_allowed_recipients)} audiencia={settings.whatsapp_audience_mode}")
+    web = settings.whatsapp_transport == "web_bridge"
+    audience = settings.whatsapp_audience_mode
+    print(f"transporte={settings.whatsapp_transport}")
+    if web:
+        # Transporte experimental: el envío lo autoriza WEB_BRIDGE_AUTO_REPLY; las variables de Meta no aplican.
+        _check("Puente web: URL en loopback o HTTPS", bool(settings.web_bridge_url), failures)
+        _check("Puente web: secreto de 32+ caracteres (no se muestra)", len(settings.web_bridge_secret or "") >= 32, failures)
+        _check("Puente web: línea configurada", bool(settings.web_bridge_line_id), failures)
+        _check("Puente web: nunca en modo público", audience != "public", failures)
+        print(f"respuestas_automaticas_autorizadas={'si' if settings.web_bridge_auto_reply else 'no'} "
+              "(antes de la confirmación final debe ser 'no')")
+    else:
+        _check("Envío a Meta habilitado (META_SEND_ENABLED=true)", settings.meta_send_enabled is True, failures)
+        _check("WHATSAPP_DRY_RUN=false", settings.whatsapp_dry_run is False, failures)
+    print(f"audiencia={audience} destinatarios_en_lista_de_prueba={len(settings.whatsapp_allowed_recipients)}")
+    universal = web and settings.web_bridge_inbound_mode == "web_inbound_all"
+    if universal:
+        # Ventana universal: no hay lista; la caducidad y el apagado son los controles.
+        import time as _time
+        remaining = (settings.web_bridge_inbound_until or 0) - int(_time.time())
+        print(f"alcance_entrada=web_inbound_all ventana_restante_s={max(remaining, 0)} "
+              "(excluye agenda e historial; solo chats individuales nuevos)")
+        _check("Ventana universal activa y dentro de 15 minutos", 0 < remaining <= 900, failures)
+    elif audience == "test_allowlist":
+        # Modo de desarrollo: solo responde a la lista de prueba, que por tanto es obligatoria.
+        _check("Lista blanca de destinatarios no vacía (modo test_allowlist)",
+               len(settings.whatsapp_allowed_recipients) > 0, failures)
+    else:
+        # Modo público: la lista no se exige ni se usa. La identidad de la línea sí (ver abajo).
+        print("Modo público: no se exige lista blanca; la ventana de 24 horas y la identidad de la línea aplican.")
     _check("Sin simulador con envío activo", not worker_profile_problems(settings, real_sender=True), failures)
     _check("Se exige proveedor real", requires_real_provider(settings), failures)
 
-    if settings.meta_access_token and settings.meta_phone_number_id:
+    if web:
+        ok, status = check_bridge_status(settings.web_bridge_url or "", settings.web_bridge_secret or "")
+        if ok:
+            print(f"puente: conexion={status.get('connection')} respuestas_automaticas={status.get('auto_reply')} "
+                  f"apagado={status.get('killed')}")
+            _check("Puente web: sesión vinculada y conectada", status.get("connection") == "open", failures)
+        else:
+            _check(f"Puente web: alcanzable y firmado ({status.get('error', 'error')})", False, failures)
+    elif settings.meta_access_token and settings.meta_phone_number_id:
         valid, detail = check_meta_token(settings.meta_access_token, settings.meta_phone_number_id,
                                          settings.meta_graph_api_version or "v26.0")
         _check(f"Token de Meta vigente (lectura, sin envio): {detail}", valid, failures)
@@ -185,11 +248,15 @@ def main() -> int:
             _, identity = read_line_identity(settings.meta_access_token, settings.meta_phone_number_id,
                                              settings.meta_graph_api_version or "v26.0")
             print(f"identidad_linea: modo_cuenta={identity.get('account_mode')} "
-                  f"verificacion={identity.get('verified')} estado={identity.get('status')}")
-            if settings.whatsapp_audience_mode == "public":
-                # El modo público nunca se activa sobre un número virtual de pruebas.
-                _check("Modo público: línea LIVE, VERIFIED y CONNECTED (no es número de pruebas)",
-                       is_production_line(identity), failures)
+                  f"verificacion={identity.get('verified')} estado={identity.get('status')} "
+                  f"numero_visible={masked_display(identity.get('display_phone'))}")
+            verdict = assess_line(identity, settings.whatsapp_expected_display_number)
+            # Informativo en test_allowlist; obligatorio en public. Nunca se declara 'listo para público' con un número de prueba.
+            print(f"linea_apta_para_publico={'si' if verdict.ready_for_public else 'no'} "
+                  f"motivos={','.join(verdict.reasons) or '-'}")
+            if audience == "public":
+                _check("Modo público: línea LIVE, VERIFIED, CONNECTED, número visible real y igual al esperado",
+                       verdict.ready_for_public, failures)
     else:
         _check("Token de Meta y número de negocio presentes", False, failures)
 
@@ -200,7 +267,14 @@ def main() -> int:
         _check(f"Modelo efectivo = {args.expect_model}", provider.model == args.expect_model, failures)
 
     worker_settings = WorkerSettings.from_env()
-    fields = describe_worker_profile(settings, worker_settings, provider)
+    # Mismo selector que usa el worker: la clase reportada es la del objeto que se construiría (sin red).
+    # Informativo: las credenciales de Meta ya se validan arriba. Con web_bridge el constructor no hace red ni valida.
+    try:
+        sender = select_sender(settings)
+    except Exception as exc:  # noqa: BLE001 - se muestra el tipo de error, nunca el mensaje
+        sender = None
+        print(f"remitente_no_construible={type(exc).__name__}")
+    fields = describe_worker_profile(settings, worker_settings, provider, sender=sender)
     print("== Perfil que registrará el worker")
     print(format_profile(fields))
 
@@ -224,7 +298,10 @@ def main() -> int:
     if failures:
         print(f"RECHAZADO: {len(failures)} comprobación(es) fallida(s). No arrancar el piloto.")
         return 1
-    print("LISTO para un único worker con Anthropic real.")
+    if audience == "public":
+        print("LISTO para un único worker con Anthropic real, en modo PÚBLICO (solo conversaciones iniciadas por clientes).")
+    else:
+        print("LISTO para un único worker con Anthropic real, en modo test_allowlist (desarrollo). NO es atención pública.")
     return 0
 
 

@@ -44,6 +44,9 @@ def worker_profile_problems(settings: Settings, *, real_sender: bool = True) -> 
     simulated = settings.agent_dry_run or explicit == "fake"
     if real_sender and simulated and settings.meta_send_enabled and not settings.demo_enabled:
         problems.append("simulated_provider_send_refused")
+    if real_sender and simulated and settings.whatsapp_transport == "web_bridge" and settings.web_bridge_auto_reply:
+        # Con el transporte web, un proveedor simulado enviaría texto de prueba a personas reales por el puente.
+        problems.append("simulated_provider_send_refused_web_bridge")
     return problems
 
 

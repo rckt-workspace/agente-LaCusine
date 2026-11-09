@@ -39,6 +39,16 @@ def _float(name: str, default: float) -> float:
         raise ValueError(f"{name} debe ser numérico") from None
 
 
+def _optional_int(name: str) -> int | None:
+    raw = (os.environ.get(name) or "").strip()
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        return -1  # valor inválido: queda expirado y la validación de arranque lo rechaza
+
+
 def _csv(name: str) -> tuple[str, ...]:
     raw = os.environ.get(name) or ""
     return tuple(item.strip() for item in raw.split(",") if item.strip())
@@ -79,6 +89,29 @@ class Settings:
     # public: cualquier contacto que escriba primero a la línea registrada, solo con confirmación explícita.
     whatsapp_audience_mode: str = "test_allowlist"
     whatsapp_public_confirmation: str | None = None
+    # Número visible que debe mostrar la línea (p. ej. +573153863179). Obligatorio en modo public; no es un secreto.
+    whatsapp_expected_display_number: str | None = None
+    # Transporte de salida y entrada. cloud_api (por defecto) = Meta Cloud API oficial.
+    # web_bridge = conector experimental de WhatsApp Web vinculado (no oficial), solo para pruebas controladas.
+    whatsapp_transport: str = "cloud_api"
+    web_bridge_url: str | None = None
+    web_bridge_secret: str | None = field(default=None, repr=False)
+    web_bridge_line_id: str | None = None
+    # Respuestas automáticas del transporte web. Desactivadas: el puente no reenvía nada y el remitente no envía.
+    web_bridge_auto_reply: bool = False
+    # Alcance de entrada del transporte web. single_chat (por defecto) = solo WHATSAPP_ALLOWED_RECIPIENTS.
+    # web_inbound_all = chats individuales NUEVOS de números que no están en la agenda ni en el historial,
+    # solo hasta web_bridge_inbound_until (instante Unix). Requiere autorización explícita y caduca.
+    web_bridge_inbound_mode: str = "single_chat"
+    web_bridge_inbound_until: int | None = None
+    # Confirmación explícita para atención pública por WhatsApp Web (web_bridge). Sin el token exacto no se activa.
+    web_bridge_public_confirmation: str | None = field(default=None, repr=False)
+
+    def active_line_id(self) -> str | None:
+        """Identificador de la línea que usa el procesamiento (despachador y filtros de entrada)."""
+        if self.whatsapp_transport == "web_bridge":
+            return self.web_bridge_line_id
+        return self.meta_phone_number_id
     # Límites de frecuencia por conversación (mensajes entrantes). Protegen los créditos de IA frente a abuso.
     contact_max_inbound_per_hour: int = 20
     contact_max_inbound_per_day: int = 60
@@ -163,6 +196,15 @@ class Settings:
             whatsapp_max_concurrency=_int("WHATSAPP_MAX_CONCURRENCY", 2),
             whatsapp_audience_mode=(os.environ.get("WHATSAPP_AUDIENCE_MODE") or "test_allowlist").strip().lower(),
             whatsapp_public_confirmation=os.environ.get("WHATSAPP_PUBLIC_CONFIRMATION") or None,
+            whatsapp_expected_display_number=os.environ.get("WHATSAPP_EXPECTED_DISPLAY_NUMBER") or None,
+            whatsapp_transport=(os.environ.get("WHATSAPP_TRANSPORT") or "cloud_api").strip().lower(),
+            web_bridge_url=os.environ.get("WEB_BRIDGE_URL") or None,
+            web_bridge_secret=os.environ.get("WEB_BRIDGE_SECRET") or None,
+            web_bridge_line_id=os.environ.get("WEB_BRIDGE_LINE_ID") or None,
+            web_bridge_auto_reply=(os.environ.get("WEB_BRIDGE_AUTO_REPLY") or "false").strip().lower() == "true",
+            web_bridge_inbound_mode=(os.environ.get("WEB_BRIDGE_INBOUND_MODE") or "single_chat").strip().lower(),
+            web_bridge_inbound_until=_optional_int("WEB_BRIDGE_INBOUND_UNTIL"),
+            web_bridge_public_confirmation=os.environ.get("WEB_BRIDGE_PUBLIC_CONFIRMATION") or None,
             contact_max_inbound_per_hour=_int("CONTACT_MAX_INBOUND_PER_HOUR", 20),
             contact_max_inbound_per_day=_int("CONTACT_MAX_INBOUND_PER_DAY", 60),
             analysis_ai_enabled=_bool("ANALYSIS_AI_ENABLED", False),
