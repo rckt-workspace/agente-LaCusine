@@ -256,3 +256,44 @@ def test_agent_cost_is_not_part_of_outbox_decision():
     agent = FakeAgent(_outcome(OutcomeStatus.REPLIED, reply_text="ok", cost_usd=Decimal("0.001")))
     _processor(agent, outbox=outbox).process(_claim(), ALWAYS_RENEW)
     assert "cost" not in outbox.rows[0]
+
+
+def test_budget_blocked_messages_do_not_chain_apologies_in_the_same_conversation():
+    # Regresión: cada mensaje bloqueado por presupuesto generaba otra disculpa, sin límite.
+    outbox = FakeOutbox()
+    agent = FakeAgent(_outcome(OutcomeStatus.BUDGET_BLOCKED, error_code="daily_budget"))
+    processor = _processor(agent, outbox=outbox)
+    for n in range(4):
+        processor.process(_claim(external=f"wamid.B{n}"), ALWAYS_RENEW)
+    texts = [row["reply_text"] for row in outbox.rows]
+    assert texts[0] == SAFE_REPLY_RETRY
+    assert texts[1:] == [None, None, None], "las siguientes quedan registradas sin respuesta"
+
+
+def test_a_different_conversation_still_gets_its_own_contingency_reply():
+    # Cada cliente tiene su propia conversación: el corte de disculpas es por conversación, no global.
+    class PerContactLeads(FakeLeads):
+        def get_or_create(self, wa_id):
+            return self.ids.setdefault(wa_id, uuid.uuid4())
+
+        def __init__(self):
+            super().__init__()
+            self.ids = {}
+
+    class PerLeadConversations(FakeConversations):
+        def __init__(self):
+            super().__init__()
+            self.ids = {}
+
+        def get_or_open(self, lead_id):
+            return self.ids.setdefault(lead_id, uuid.uuid4())
+
+    outbox = FakeOutbox()
+    agent = FakeAgent(_outcome(OutcomeStatus.BUDGET_BLOCKED, error_code="daily_budget"))
+    processor = EventProcessor(
+        agent=agent, leads=PerContactLeads(), conversations=PerLeadConversations(), messages=FakeMessages(),
+        handoffs=FakeHandoffs(), outbox=outbox, retention_days=7, expected_business_phone_id="1",
+    )
+    processor.process(_claim(contact="573001112233", external="wamid.C1"), ALWAYS_RENEW)
+    processor.process(_claim(contact="573009998877", external="wamid.C2"), ALWAYS_RENEW)
+    assert [row["reply_text"] for row in outbox.rows] == [SAFE_REPLY_RETRY, SAFE_REPLY_RETRY]

@@ -27,6 +27,8 @@ from app.agent.schemas import LeadStage
 from app.models.referral import sanitize_referral
 
 logger = logging.getLogger("lacusine.worker")
+# Intervalo mínimo entre dos respuestas de contingencia a la misma conversación.
+CONTINGENCY_COOLDOWN = timedelta(minutes=60)
 from app.repositories.jobs import Claim
 from app.repositories.outbound import META_STATUSES
 from app.worker.errors import ManualReviewRequired, PermanentJobError
@@ -89,6 +91,8 @@ class EventProcessor:
         self._outbox = outbox
         self._retention = timedelta(days=retention_days)
         self._clock = clock
+        # Última respuesta de contingencia por conversación. Evita una secuencia ilimitada de disculpas.
+        self._contingency_at: dict[str, datetime] = {}
 
     def process(self, claim: Claim, renew: Callable[[], bool]) -> ProcessResult:
         self._check_business_line(claim)
@@ -227,7 +231,15 @@ class EventProcessor:
 
     def _recoverable(self, claim, conversation_id, lead_id, code: str, now) -> ProcessResult:
         """Error que no es una petición de asesor: se responde con un mensaje neutro y la conversación sigue activa."""
-        logger.info("recoverable_reply event=%s code=%s", claim.event_id, code)
+        key = str(conversation_id)
+        last = self._contingency_at.get(key)
+        if last is not None and now - last < CONTINGENCY_COOLDOWN:
+            # Ya se avisó hace poco: no se encadena otra disculpa. El fallo NO se oculta: queda como alerta operativa.
+            logger.warning("operational_alert kind=recoverable_failure code=%s event=%s suppressed=true", code, claim.event_id)
+            return self._persist(claim, conversation_id, lead_id, None, None, now,
+                                 ignored_reason="contingency_cooldown", error_code=code)
+        self._contingency_at[key] = now
+        logger.warning("operational_alert kind=recoverable_failure code=%s event=%s suppressed=false", code, claim.event_id)
         return self._persist(claim, conversation_id, lead_id, None, SAFE_REPLY_RETRY, now, error_code=code)
 
     def _persist(self, claim, conversation_id, lead_id, lead_status, reply_text, now,

@@ -196,3 +196,33 @@ def test_filtros_en_plural_encuentra_el_filtro_real_primero():
 
 def test_singular_y_plural_dan_el_mismo_resultado_principal():
     assert _refs(_search("necesito filtro Jura"))[:1] == _refs(_search("necesito filtros Jura"))[:1]
+
+
+# --- Consultas conversacionales reales (relleno que no describe el producto) ---
+
+def test_palabras_de_relleno_de_una_pregunta_no_entran_como_terminos():
+    found = tokens("Hola, ¿qué cafeteras venden? ¿Cuál me recomiendas?")
+    assert found == ["cafeteras"], found
+    assert tokens("¿Y para espresso cuál me sirve?") == ["espresso"]
+    assert tokens("cafetera para una familia de cuatro personas en casa") == ["cafetera"]
+    assert tokens("necesito una cafetera para la oficina, fácil de usar y bonita") == ["cafetera"]
+
+
+def test_que_cafeteras_venden_devuelve_maquinas_y_no_cocinas_ni_hornos():
+    result = _search("Hola, ¿qué cafeteras venden? ¿Cuál me recomiendas?")
+    top = result.hits[:3]
+    assert top and all(_is_machine(h) for h in top), [(h.reference, h.category) for h in top]
+    assert {h.reference for h in result.hits[:3]} <= {"15711", "15465", "15495", "15800", "15783", "WCM242B"}
+
+
+def test_para_espresso_cual_me_sirve_no_recomienda_cubiertas_de_induccion():
+    result = _search("¿Y para espresso cuál me sirve?")
+    assert all(h.category != "Cubiertas de inducción" for h in result.hits[:3]), [h.category for h in result.hits]
+    assert _is_machine(result.hits[0])
+
+
+def test_en_la_busqueda_de_maquinas_las_cafeteras_van_antes_que_los_pequenos_electrodomesticos():
+    result = _search("cafetera económica")
+    cats = [h.category for h in result.hits]
+    first_small = next((i for i, c in enumerate(cats) if not c.startswith("Cafeteras")), len(cats))
+    assert first_small >= 1 and all(c.startswith("Cafeteras") for c in cats[:first_small])

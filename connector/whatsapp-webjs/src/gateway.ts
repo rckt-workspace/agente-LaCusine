@@ -53,6 +53,9 @@ export interface Transport {
   sendMessage(chatId: string, text: string): Promise<{ id?: { _serialized?: string } } | null | undefined>;
   // Comprobación previa: ¿WhatsApp resuelve el chat? Si no, nada puede salir. Opcional por compatibilidad.
   chatResolved?(chatId: string): Promise<boolean>;
+  // Recuperación del identificador de un mensaje propio ya enviado: busca en el chat un mensaje saliente con el mismo
+  // texto exacto enviado desde sinceSec. Devuelve su identificador o null. Opcional.
+  recoverSentId?(chatId: string, text: string, sinceSec: number): Promise<string | null>;
 }
 
 // El chat no se resuelve en WhatsApp Web: no sale nada. Es un rechazo definitivo, no un envío incierto.
@@ -74,6 +77,8 @@ export interface GatewayDeps {
   transport: Transport;
   forward(items: ForwardItem[]): Promise<ForwardResult>;
   log(line: string): void;
+  // Detiene el indicador «escribiendo…» del chat antes de enviar la respuesta (opcional).
+  typingStop?(chatId: string): Promise<void>;
 }
 
 // Tipo de dirección, sin revelarla: útil en los registros.
@@ -181,16 +186,33 @@ export async function sendText(route: string, text: string, deps: GatewayDeps): 
     if (!resolved) throw new ChatNotResolvedError();
   }
   let sent: Awaited<ReturnType<Transport["sendMessage"]>>;
+  // Marca de inicio con margen: el mensaje propio debe tener una hora igual o posterior.
+  const sinceSec = Math.floor(Date.now() / 1000) - 5;
+  // La respuesta sustituye al indicador: se apaga antes de enviar y nunca bloquea el envío.
+  if (deps.typingStop) await deps.typingStop(chatId).catch(() => undefined);
   try {
     sent = await deps.transport.sendMessage(chatId, text);
   } catch (err) {
     deps.diag.sendFailuresTotal += 1;
     throw err;
   }
-  const id = sent?.id?._serialized;
+  let id = sent?.id?._serialized;
   if (typeof id !== "string" || id.length === 0) {
-    deps.diag.sendFailuresTotal += 1;
-    throw new Error("no_message_id");
+    // La librería devuelve vacío DESPUÉS de haber enviado cuando no encuentra el mensaje en su almacén local
+    // (addAndSendMsgToChat se ejecuta antes del lookup). Se intenta confirmar el envío con el propio chat.
+    const shape = sent === undefined ? "undefined" : sent === null ? "null" : "object_without_id";
+    deps.log(`stage=05_no_message_id result=${shape}`);
+    const recovered = deps.transport.recoverSentId
+      ? await deps.transport.recoverSentId(chatId, text, sinceSec).catch(() => null)
+      : null;
+    if (typeof recovered === "string" && recovered.length > 0) {
+      deps.log("stage=05_send_recovered");
+      id = recovered;
+    } else {
+      // Sin confirmación: el resultado es INCIERTO. El puente responde 500 y el backend nunca lo reenvía solo.
+      deps.diag.sendFailuresTotal += 1;
+      throw new Error("no_message_id");
+    }
   }
   deps.diag.sendsTotal += 1;
   return id;

@@ -20,6 +20,13 @@ STOPWORDS = frozenset(
         # Preferencias de precio: se usan para ordenar (ver product_search.ECONOMY_TERMS), no para coincidir.
         "economica", "economico", "economicas", "economicos", "barata", "barato", "baratas", "baratos",
         "asequible",
+        # Preguntas y verbos de disponibilidad o venta: no describen el producto (detectados en consultas reales).
+        "vende", "venden", "vendes", "vender", "cual", "cuales", "sirve", "sirven", "disponible", "disponibles",
+        "existe", "existen", "cuantas", "cuantos", "ayuda", "ayudame",
+        # Contexto de uso del cliente: orienta la conversación, no coincide con el catálogo.
+        "familia", "familias", "personas", "persona", "casa", "hogar", "oficina", "cuatro", "tres", "dos", "cinco",
+        "bonita", "bonito", "facil", "usar", "buena", "bueno", "recomendar", "recomendaciones",
+        "recomiendas", "recomiendo", "recomienden",
     }
 )
 

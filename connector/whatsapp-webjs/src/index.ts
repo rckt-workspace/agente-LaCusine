@@ -22,6 +22,7 @@ import { errorSummary, pageProbe, sanitize, wwebjsVersion } from "./diagnostics.
 import { forwardToBackend } from "./forwarder.js";
 import { fieldsLine, missingRequirements, normalizeMessage } from "./inbound.js";
 import { verifyLidIdentity } from "./identity.js";
+import { TypingManager } from "./typing.js";
 import { acquireLock, releaseLock } from "./lock.js";
 import { BoundedSet, type InboundFacts } from "./policy.js";
 import { newDiag, onIncoming, sendText, type ConnState, type GatewayDeps } from "./gateway.js";
@@ -93,6 +94,18 @@ const deps: GatewayDeps = {
   nowSec,
   transport: {
     sendMessage: (chatId, text) => client.sendMessage(chatId, text),
+    // Confirmación de un envío cuyo identificador no se devolvió: busca un mensaje propio con el mismo texto exacto
+    // enviado desde el inicio del intento. Solo lectura; nunca envía nada.
+    recoverSentId: async (chatId, text, sinceSec) => {
+      const chat = await (client as any).getChatById(chatId);
+      if (!chat) return null;
+      const messages: any[] = await chat.fetchMessages({ limit: 10 });
+      const hit = [...messages]
+        .reverse()
+        .find((m) => m?.fromMe === true && m?.body === text && typeof m?.timestamp === "number" && m.timestamp >= sinceSec);
+      const id = hit?.id?._serialized;
+      return typeof id === "string" && id.length > 0 ? id : null;
+    },
     // Solo lectura de la resolución del chat en WhatsApp Web (la misma que usa sendMessage).
     chatResolved: async (chatId) =>
       Boolean(
@@ -104,7 +117,22 @@ const deps: GatewayDeps = {
   },
   forward: (items) => forwardToBackend(config.backendUrl, config.secret, items),
   log: (line) => log.info(line),
+  typingStop: (chatId) => typing.stop(chatId),
 };
+
+// «Escribiendo…» por chat: solo mientras el worker procesa una respuesta real. Se apaga al enviar, al caducar
+// (60 s máximo) y al apagar el proceso. Nunca con STOP.
+const typing = new TypingManager({
+  typing: async (jid) => {
+    const chat = await (client as any).getChatById(jid);
+    if (!chat) throw new Error("chat_not_resolved");
+    await chat.sendStateTyping();
+  },
+  clear: async (jid) => {
+    const chat = await (client as any).getChatById(jid);
+    if (chat) await chat.clearState();
+  },
+});
 
 const client = new Client({
   authStrategy: new LocalAuth({ dataPath: config.authDir }),
@@ -126,6 +154,7 @@ function shutdown(code: number): void {
     server.close();
     process.exit(code);
   };
+  typing.stopAll().catch(() => undefined); // ningún temporizador huérfano al cerrar
   const fallback = setTimeout(finish, 5_000);
   client
     .destroy()
@@ -373,6 +402,19 @@ const server = createBridgeServer({
   diagnostics,
   identityOf: (route) => routes.identityFor(route),
   routeKnown: (route) => routes.knownRoute(route),
+  typing: {
+    start: async (route) => {
+      // Solo chats individuales ya reenviados desde un evento entrante auténtico.
+      if (!routes.knownRoute(route)) return "unknown_route";
+      const jid = routes.jidFor(route);
+      if (jid === null || !jid.endsWith("@c.us") && !jid.endsWith("@lid")) return "unknown_route";
+      return (await typing.start(jid)) ? "started" : "failed";
+    },
+    stop: async (route) => {
+      const jid = routes.jidFor(route);
+      if (jid !== null) await typing.stop(jid);
+    },
+  },
   sendText: async (route, text) => {
     try {
       return await sendText(route, text, deps);
@@ -385,6 +427,7 @@ const server = createBridgeServer({
   idempotency: sentStore,
   onKill: async () => {
     killedInMemory = true;
+    await typing.stopAll().catch(() => undefined); // STOP apaga también los indicadores de escritura
     log.warn("stage=kill state=requested envios=bloqueados");
     if (config.mode === "observe") setTimeout(() => shutdown(0), 300);
   },

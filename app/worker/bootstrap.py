@@ -129,7 +129,7 @@ def build_worker(settings: Settings, worker_settings: WorkerSettings, stop_event
     # "Escribiendo..." solo con proveedor real y envío de WhatsApp realmente habilitado.
     real_call = provider is not None and provider.name != "fake"
     typing = None
-    if real_call and isinstance(sender, CloudApiSender) and sender.enabled:
+    if real_call and isinstance(sender, (CloudApiSender, WebBridgeSender)) and sender.enabled:
         typing = TypingPresence(sender, conversation_reader.automation_state, kill_switch=settings.agent_kill_switch)
     processor = EventProcessor(
         agent=agent,

@@ -180,14 +180,14 @@ class CommercialAgent:
             )
 
         budget_cop = parse_budget_cop(text)
-        search = self._search.search(text, max_price_cop=budget_cop)
+        window = self._context.build(conversation_id)
+        search = self._contextual_search(text, window, budget_cop)
         signals = detect_signals(
             text,
             product_interest=bool(search.tokens),
             confident_product=search.confident,
             human_request=False,
         )
-        window = self._context.build(conversation_id)
         request = self._build_request(call_id, text, window, search)
 
         billable = self._provider.name != "fake"
@@ -286,6 +286,19 @@ class CommercialAgent:
             dry_run=dry_run,
             details={"dropped_product_ids": len(reply.recommended_product_ids) - len(product_ids)},
         )
+
+    def _contextual_search(self, text: str, window, budget_cop):
+        """Búsqueda de productos del turno. Si el mensaje actual no es confiable por sí solo («¿cuál me recomiendas
+        para mi casa?»), se reintenta junto con los mensajes previos del cliente, que sí nombran el producto.
+        Solo se acepta el resultado con contexto si es confiable; si no, se conserva la búsqueda original."""
+        search = self._search.search(text, max_price_cop=budget_cop)
+        if search.confident:
+            return search
+        previous = [turn.text for turn in window.turns if turn.role == "user"][-2:]
+        if not previous:
+            return search
+        contextual = self._search.search(" ".join([*previous, text]), max_price_cop=budget_cop)
+        return contextual if contextual.confident else search
 
     def _build_request(self, call_id: str, text: str, window, search) -> LLMRequest:
         # Los textos fijos de transferencia no se reenvían como contexto: el historial no justifica otra transferencia.

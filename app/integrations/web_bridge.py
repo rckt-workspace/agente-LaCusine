@@ -274,5 +274,32 @@ class WebBridgeSender:
         raise MetaRejectedError("bridge_rejected")
 
     def show_typing(self, to: str, inbound_message_id: str) -> None:
-        # El transporte web no expone el indicador de escritura oficial. El presentador lo ignora.
-        raise WhatsAppError("typing_unsupported")
+        """«Escribiendo…» mientras el agente prepara la respuesta. Señal firmada al conector, que la caduca sola
+        (máximo 60 s) y la apaga al enviar. Solo para destinatarios que podrían recibir respuesta."""
+        if not self.enabled:
+            raise SendDisabledError()
+        if not self._may_reply(to):
+            raise RecipientNotAllowedError()
+        body = json.dumps({"route": to, "action": "start"}, separators=(",", ":")).encode("utf-8")
+        stamp = str(int(time.time()))
+        headers = {
+            "Content-Type": "application/json",
+            "X-Bridge-Timestamp": stamp,
+            "X-Bridge-Signature": sign(self._secret, "send", stamp, body),
+        }
+        try:
+            response = self._client.post(f"{self._url}/typing", content=body, headers=headers)
+        except httpx.HTTPError:
+            raise WhatsAppError("typing_transport") from None
+        if response.status_code != 200:
+            raise WhatsAppError("typing_rejected")
+
+    def _may_reply(self, to: str) -> bool:
+        """Misma autorización que el envío, sin enviar nada."""
+        if self._inbound_mode == INBOUND_MODE_PUBLIC:
+            return self._route_known(to)
+        if self._inbound_mode == INBOUND_MODE_ALL:
+            return True
+        if self._audience == "test_allowlist":
+            return self._authorized_route(to)
+        return True

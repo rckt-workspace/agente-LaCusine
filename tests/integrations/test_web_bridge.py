@@ -184,9 +184,11 @@ def test_a_send_from_another_line_is_refused_before_any_request():
     assert calls == []
 
 
-def test_typing_indicator_is_not_supported_and_is_ignored_by_presence():
+def test_typing_indicator_signals_the_connector_and_a_refusal_is_explicit():
+    # El indicador web es una señal firmada al conector (/typing). Un rechazo del conector es un error explícito.
+    _sender(lambda r: httpx.Response(200, json={"typing": True})).show_typing(CLIENT, "wamid.X")
     with pytest.raises(Exception):
-        _sender(lambda r: httpx.Response(200)).show_typing(CLIENT, "wamid.X")
+        _sender(lambda r: httpx.Response(409, json={"error": "killed"})).show_typing(CLIENT, "wamid.X")
 
 
 # --- Arranque y auditoría de configuración ---

@@ -250,17 +250,29 @@ class PostgresRecentTurnsReader:
     def recent_turns(self, conversation_id: UUID, limit: int) -> list[tuple[str, str, datetime]]:
         try:
             with self._pool.connection() as conn:
+                # Mensajes del cliente Y respuestas del agente. Las respuestas viven en outbound_messages: sin
+                # incluirlas el modelo no recuerda lo que ya recomendó. Solo cuentan las que pudieron llegar al
+                # cliente (enviada, entregada, leída o incierta); pendientes, canceladas y fallidas no.
                 rows = conn.execute(
                     """
-                    select direction, content_text, received_at
-                    from public.messages
-                    where conversation_id = %s
-                      and content_text is not null
-                      and (content_expires_at is null or content_expires_at > now())
-                    order by received_at desc
-                    limit %s
+                    select direction, content_text, ts from (
+                        select direction, content_text, received_at as ts
+                        from public.messages
+                        where conversation_id = %(conv)s
+                          and content_text is not null
+                          and (content_expires_at is null or content_expires_at > now())
+                        union all
+                        select 'outbound' as direction, content_text, coalesce(sent_at, created_at) as ts
+                        from public.outbound_messages
+                        where conversation_id = %(conv)s
+                          and content_text is not null
+                          and delivery_status in ('sent', 'delivered', 'read', 'uncertain')
+                          and (expires_at is null or expires_at > now())
+                    ) turns
+                    order by ts desc
+                    limit %(limit)s
                     """,
-                    (conversation_id, limit),
+                    {"conv": conversation_id, "limit": limit},
                 ).fetchall()
         except (psycopg.Error, PoolClosed):
             raise StorageError("message_read_failed") from None

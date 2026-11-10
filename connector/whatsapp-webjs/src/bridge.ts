@@ -22,6 +22,8 @@ export interface BridgeDeps {
   identityOf?: (route: string) => string | null;
   // ¿La ruta fue reenviada desde un evento entrante auténtico? (solo lectura, para atención pública).
   routeKnown?: (route: string) => boolean;
+  // Indicador «escribiendo…». start: "started" | "unknown_route" | "failed". stop no falla.
+  typing?: { start(route: string): Promise<string>; stop(route: string): Promise<void> };
   onKill: () => Promise<void>;
   onUnlink?: () => Promise<void>;
   // Idempotencia persistente opcional: clave -> identificador de mensaje ya enviado.
@@ -81,6 +83,7 @@ export function createBridgeServer(deps: BridgeDeps): http.Server {
       "/unlink": { method: "POST", direction: "control" },
       "/identity": { method: "POST", direction: "status" },
       "/route": { method: "POST", direction: "status" },
+      "/typing": { method: "POST", direction: "send" },
     };
     const route = routes[url.split("?")[0] ?? ""];
     if (!route || route.method !== method) {
@@ -122,6 +125,40 @@ export function createBridgeServer(deps: BridgeDeps): http.Server {
       }
       await deps.onUnlink();
       respond(res, 200, { unlinked: true });
+      return;
+    }
+
+    if (url.startsWith("/typing")) {
+      // Señal de trabajo real del agente. Con STOP no se muestra nada.
+      if (deps.isKilled()) {
+        respond(res, 409, { error: "killed" });
+        return;
+      }
+      let asked: { route?: unknown; action?: unknown };
+      try {
+        asked = JSON.parse(body.toString("utf8")) as { route?: unknown; action?: unknown };
+      } catch {
+        respond(res, 400, { error: "invalid_json" });
+        return;
+      }
+      const route = typeof asked?.route === "string" ? asked.route : "";
+      if (!deps.typing || !route) {
+        respond(res, 422, { error: "unknown_route" });
+        return;
+      }
+      if (asked.action === "stop") {
+        await deps.typing.stop(route);
+        respond(res, 200, { typing: false });
+        return;
+      }
+      if (asked.action !== "start") {
+        respond(res, 400, { error: "invalid_payload" });
+        return;
+      }
+      const outcome = await deps.typing.start(route);
+      if (outcome === "started") respond(res, 200, { typing: true });
+      else if (outcome === "unknown_route") respond(res, 422, { error: "unknown_route" });
+      else respond(res, 500, { error: "typing_failed" });
       return;
     }
 

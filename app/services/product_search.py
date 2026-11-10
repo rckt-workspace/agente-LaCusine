@@ -68,6 +68,11 @@ def _singular(token: str) -> str:
     return token
 
 
+def _in_category(token: str, category_words: set[str]) -> bool:
+    """El término aparece como palabra de la categoría, en singular o plural («cafetera» ↔ «cafeteras»)."""
+    return token in category_words or f"{token}s" in category_words or f"{token}es" in category_words
+
+
 def query_intent(raw_words: list[str], query_tokens: list[str]) -> QueryIntent:
     """Intención de la consulta. `raw_words` incluye palabras vacías; así se detectan «económica» y «filtros»."""
     words = set(raw_words) | set(query_tokens)
@@ -109,10 +114,15 @@ def rank_candidates(hits: list[ProductHit], intent: QueryIntent) -> list[Product
             price_rank = -float(hit.price_cop)  # más barato = mayor puntuación, solo en consultas económicas
         else:
             price_rank = 0.0
+        # La categoría del producto nombra lo que busca el cliente («cafeteras» → «Cafeteras automáticas»).
+        # Así una máquina gana a un electrodoméstico que solo comparte una palabra de relleno.
+        category_words = set(normalize(hit.category or "").split())
+        category_mentions = sum(1 for t in intent.query_tokens if _in_category(t, category_words))
         return (
             bool(hit.reference_match),
             is_aligned(hit, intent),
             brand_mentions,
+            category_mentions,
             hit.matched_tokens,
             bool(hit.is_available),
             price_rank,
